@@ -1,11 +1,11 @@
 # Feature Engineering Specification
 
-## 📦 Feature Schema (v1.0-flat)
+## Feature Schema (v1.0-flat)
 
 - **Model Input Type:** `tabular_flat`
 - **Target Variable:** `price` (numeric)
 
-### 🔹 Input Features
+### Input Features
 
 | Feature Name                  | Type                         | Encoding | Possible Values / Description                                                                                         |
 | ----------------------------- | ---------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------- |
