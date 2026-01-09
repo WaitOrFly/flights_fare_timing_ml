@@ -1,3 +1,12 @@
+# Wait or Fly?
+항공권 가격은 **언제 구매하느냐**에 따라 크게 달라지지만,
+사용자는 “지금 사야 할지, 며칠 기다려야 할지”를 판단하기 어렵다.
+
+이 프로젝트는 **과거 항공권 가격의 시간적 변동 패턴을 학습해, 최적의 구매 시점을 예측하고 리포트로 제공하는 서비스**를 목표로 한다.
+
+# 사용한 알고리즘
+XGBoost Regressor
+
 # Feature Engineering Specification
 
 ## Feature Schema (v1.0-flat)

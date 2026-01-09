@@ -1,0 +1,8 @@
+sagemaker
+boto3
+mlflow
+xgboost
+numpy
+pandas
+scikit-learn
+joblib
