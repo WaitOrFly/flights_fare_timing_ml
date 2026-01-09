@@ -10,6 +10,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import hashlib
+import re
 import warnings
 from scipy import stats
 import boto3
@@ -39,6 +40,12 @@ class FlightFeatureEngineer:
         원본 데이터를 feature schema 형식으로 변환
         """
         df = df.copy()
+
+        # 숫자형 컬럼 정제
+        if 'Fare' in df.columns:
+            df['Fare'] = pd.to_numeric(df['Fare'], errors='coerce').fillna(0)
+        if 'Number Of Stops' in df.columns:
+            df['Number Of Stops'] = df['Number Of Stops'].apply(self._parse_stops)
         
         # 날짜/시간 파싱
         df['crawl_datetime'] = pd.to_datetime(df['Crawl Timestamp'], utc=True).dt.tz_localize(None)
@@ -122,10 +129,22 @@ class FlightFeatureEngineer:
         else:
             return 'far'
     
-    def _hash_route(self, source: str, destination: str) -> str:
+    def _hash_route(self, source: str, destination: str) -> int:
         """출발지-목적지를 해시값으로 변환"""
         route_str = f"{source}_{destination}"
-        return hashlib.md5(route_str.encode()).hexdigest()[:8]
+        return int(hashlib.md5(route_str.encode()).hexdigest()[:8], 16)
+
+    def _parse_stops(self, value) -> int:
+        """경유 횟수를 정수로 변환"""
+        if pd.isna(value):
+            return 0
+        if isinstance(value, (int, np.integer)):
+            return int(value)
+        text = str(value).strip().lower()
+        if "non" in text:
+            return 0
+        match = re.search(r"\d+", text)
+        return int(match.group(0)) if match else 0
     
     def _parse_duration(self, duration_str: str) -> int:
         """
@@ -465,7 +484,8 @@ def preprocess(input_data_s3_uri: str, output_data_s3_uri: str, experiment_name=
             
             # Target과 features 분리
             target_col = 'price'
-            X = df_features.drop([c for c in df_features.columns if 'price' in c], axis=1)
+            drop_cols = [col for col in ['price', 'price_original'] if col in df_features.columns]
+            X = df_features.drop(columns=drop_cols)
             y = df_features[target_col]
             
             # 먼저 Train(70%) / Temp(30%) 분할
@@ -525,10 +545,14 @@ def preprocess(input_data_s3_uri: str, output_data_s3_uri: str, experiment_name=
             
             # 7. Featurizer 모델 저장 (MLflow)
             print(f"\n💾 Featurizer 모델 저장 중...")
+            safe_name = "".join(
+                ch if ch.isalnum() else "-" for ch in f"{experiment_name}-featurizer"
+            ).strip("-")
+            safe_name = safe_name[:57]
             mlflow.sklearn.log_model(
                 featurizer_model,
                 "featurizer",
-                registered_model_name=f"{experiment_name}_featurizer"
+                registered_model_name=safe_name
             )
             print(f"✅ Featurizer 모델 저장 완료")
 

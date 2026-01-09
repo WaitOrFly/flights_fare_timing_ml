@@ -53,7 +53,8 @@ def register(
 ):
     session = Session()
     region = session.boto_region_name
-    image_uri = image_uris.retrieve(framework="xgboost", region=region, version="1.7-1")
+    framework_version = "1.7-1"
+    image_uri = image_uris.retrieve(framework="xgboost", region=region, version=framework_version)
 
     work_dir = "/tmp/model_artifacts"
     tar_path = _save_model_artifacts(featurizer_model, booster, work_dir)
@@ -77,6 +78,7 @@ def register(
     model = XGBoostModel(
         model_data=model_data,
         image_uri=image_uri,
+        framework_version=framework_version,
         role=role,
         sagemaker_session=session,
     )
