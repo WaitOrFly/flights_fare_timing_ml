@@ -580,17 +580,3 @@ def preprocess(input_data_s3_uri: str, output_data_s3_uri: str, experiment_name=
         run_id
     )
 
-
-if __name__ == "__main__":
-    # 테스트 실행 예제
-    # input_s3_uri = "s3://your-bucket/data/raw/flight_fares.csv"
-    # output_s3_uri = "s3://your-bucket/data/processed/"
-    # X_train, y_train, X_val, y_val, X_test, y_test, featurizer, run_id = preprocess(
-    #     input_data_s3_uri=input_s3_uri,
-    #     output_data_s3_uri=output_s3_uri,
-    #     experiment_name="flight_price_experiment",
-    #     run_name="preprocess-run-01"
-    # )
-    print("Preprocessing module loaded successfully.")
-    print("Use preprocess(input_data_s3_uri, output_data_s3_uri) to run.")
-
