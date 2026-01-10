@@ -34,6 +34,12 @@ class FlightFeatureEngineer:
         # 인도 공휴일 시즌 정의
         self.holiday_months = [1, 3, 4, 5, 6, 8, 10, 11]  # Republic Day, Holi, 여름휴가, Independence Day, Diwali/Dussehra
         self.apply_log_to_target = apply_log_to_target
+        self.ordinal_mapping = {
+            'very_close': 0,
+            'close': 1,
+            'medium': 2,
+            'far': 3,
+        }
         
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -63,8 +69,9 @@ class FlightFeatureEngineer:
         
         # 3. days_until_departure_bucket: 출발까지 남은 일수
         days_until = (df['departure_datetime'] - df['crawl_datetime']).dt.days
-        features['days_until_departure_bucket'] = days_until.apply(
-            self._get_days_until_bucket
+        days_until_bucket = days_until.apply(self._get_days_until_bucket)
+        features['days_until_departure_bucket'] = days_until_bucket.map(
+            self.ordinal_mapping
         )
         
         # 4. is_weekend_departure: 주말 출발 여부
@@ -289,9 +296,10 @@ class FlightPricePreprocessor:
         """Ordinal feature 인코딩"""
         df = df.copy()
         if 'days_until_departure_bucket' in df.columns:
-            df['days_until_departure_bucket'] = df['days_until_departure_bucket'].map(
-                self.ordinal_mapping
-            )
+            if df['days_until_departure_bucket'].dtype == object:
+                df['days_until_departure_bucket'] = df['days_until_departure_bucket'].map(
+                    self.ordinal_mapping
+                )
         return df
     
     def fit(self, X: pd.DataFrame, y=None):
@@ -549,8 +557,9 @@ def preprocess(input_data_s3_uri: str, output_data_s3_uri: str, experiment_name=
                 ch if ch.isalnum() else "-" for ch in f"{experiment_name}-featurizer"
             ).strip("-")
             safe_name = safe_name[:57]
+            featurizer_transformer = featurizer_model.preprocessor
             mlflow.sklearn.log_model(
-                featurizer_model,
+                featurizer_transformer,
                 "featurizer",
                 registered_model_name=safe_name
             )
@@ -562,7 +571,7 @@ def preprocess(input_data_s3_uri: str, output_data_s3_uri: str, experiment_name=
             model_file_path = "/opt/ml/model/sklearn_model.joblib"
             os.makedirs(os.path.dirname(model_file_path), exist_ok=True)
 
-            joblib.dump(featurizer_model, model_file_path)
+            joblib.dump(featurizer_transformer, model_file_path)
             mlflow.log_artifact(model_file_path, artifact_path="model")
 
             # ===== 최종 결과 데이터셋 S3 저장 =====
@@ -600,7 +609,7 @@ def preprocess(input_data_s3_uri: str, output_data_s3_uri: str, experiment_name=
         y_val.values,
         X_test_processed,
         y_test.values,
-        featurizer_model,
+        featurizer_transformer,
         run_id
     )
 

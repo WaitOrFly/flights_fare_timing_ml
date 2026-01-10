@@ -1,15 +1,22 @@
+import io
 import json
 import os
-import tarfile
 from typing import Dict
 
 import joblib
+import numpy as np
+import pandas as pd
+import s3fs
 import xgboost as xgb
 from sagemaker import image_uris
 from sagemaker.model_metrics import MetricsSource, ModelMetrics
-from sagemaker.s3 import S3Uploader
+from sagemaker.pipeline import PipelineModel
+from sagemaker.s3_utils import s3_path_join
+from sagemaker.serve import CustomPayloadTranslator, InferenceSpec, ModelServer
+from sagemaker.serve.builder.model_builder import ModelBuilder
+from sagemaker.serve.builder.schema_builder import SchemaBuilder
 from sagemaker.session import Session
-from sagemaker.xgboost.model import XGBoostModel
+from sagemaker.utils import unique_name_from_base
 
 
 def _get_mlflow():
@@ -26,18 +33,123 @@ def _get_mlflow():
     return mlflow
 
 
-def _save_model_artifacts(featurizer_model, booster: xgb.Booster, output_dir: str) -> str:
-    os.makedirs(output_dir, exist_ok=True)
-    featurizer_path = os.path.join(output_dir, "featurizer.joblib")
-    booster_path = os.path.join(output_dir, "xgboost-model.json")
-    joblib.dump(featurizer_model, featurizer_path)
-    booster.save_model(booster_path)
+def _build_sklearn_model(role: str, featurizer_model):
+    feature_names = getattr(featurizer_model, "feature_names_in_", None)
+    if feature_names is None:
+        feature_names = [
+            "purchase_day_of_week",
+            "purchase_time_bucket",
+            "days_until_departure_bucket",
+            "is_weekend_departure",
+            "is_holiday_season",
+            "price_trend_7d",
+            "current_vs_historical_avg",
+            "route_hash",
+            "stops_count",
+            "flight_duration_bucket",
+        ]
 
-    tar_path = os.path.join(output_dir, "model.tar.gz")
-    with tarfile.open(tar_path, "w:gz") as tar:
-        tar.add(featurizer_path, arcname="featurizer.joblib")
-        tar.add(booster_path, arcname="xgboost-model.json")
-    return tar_path
+    class SklearnRequestTranslator(CustomPayloadTranslator):
+        def serialize_payload_to_bytes(self, payload: object) -> bytes:
+            return payload.encode("utf-8")
+
+        def deserialize_payload_from_stream(self, stream) -> pd.DataFrame:
+            df = pd.read_csv(io.BytesIO(stream.read()), header=None)
+            df.columns = feature_names
+            return df
+
+    class SklearnModelSpec(InferenceSpec):
+        def invoke(self, input_object: object, model: object):
+            return model.transform(input_object)
+
+        def load(self, model_dir: str):
+            model_path = os.path.join(model_dir, "sklearn_model.joblib")
+            return joblib.load(model_path)
+
+    schema_builder = SchemaBuilder(
+        sample_input=",".join(feature_names),
+        sample_output=np.zeros(8),
+        input_translator=SklearnRequestTranslator(),
+    )
+
+    model_path = "sklearn_model"
+    os.makedirs(model_path, exist_ok=True)
+    joblib.dump(featurizer_model, os.path.join(model_path, "sklearn_model.joblib"))
+
+    session = Session()
+    image_uri = image_uris.retrieve(
+        framework="sklearn", region=session.boto_region_name, version="1.2-1"
+    )
+    requirements_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "requirements_inference.txt")
+    )
+    print(f"[Register] requirements_inference.txt: {requirements_path}")
+    try:
+        with open(requirements_path, "r", encoding="utf-8") as req_file:
+            print("[Register] requirements_inference.txt contents:")
+            print(req_file.read())
+    except OSError as exc:
+        print(f"[Register] Failed to read requirements_inference.txt: {exc}")
+    model_builder = ModelBuilder(
+        model_path=model_path,
+        name="sklearn_featurizer",
+        dependencies={"requirements": requirements_path},
+        image_uri=image_uri,
+        schema_builder=schema_builder,
+        model_server=ModelServer.TORCHSERVE,
+        inference_spec=SklearnModelSpec(),
+        role_arn=role,
+    )
+    return model_builder.build()
+
+
+def _build_xgboost_model(role: str, booster: xgb.Booster):
+    class RequestTranslator(CustomPayloadTranslator):
+        def serialize_payload_to_bytes(self, payload: object) -> bytes:
+            return self._convert_numpy_to_bytes(payload)
+
+        def deserialize_payload_from_stream(self, stream) -> xgb.DMatrix:
+            np_array = np.load(io.BytesIO(stream.read())).reshape((1, -1))
+            return xgb.DMatrix(np_array)
+
+        def _convert_numpy_to_bytes(self, np_array: np.ndarray) -> bytes:
+            buffer = io.BytesIO()
+            np.save(buffer, np_array)
+            return buffer.getvalue()
+
+    schema_builder = SchemaBuilder(
+        sample_input=np.zeros(8),
+        sample_output=np.array([0.0]),
+        input_translator=RequestTranslator(),
+    )
+
+    model_path = "xgboost_model"
+    os.makedirs(model_path, exist_ok=True)
+    booster.save_model(os.path.join(model_path, "xgboost_model.bin"))
+
+    session = Session()
+    image_uri = image_uris.retrieve(
+        framework="xgboost", region=session.boto_region_name, version="1.7-1"
+    )
+    requirements_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "requirements_inference.txt")
+    )
+    print(f"[Register] requirements_inference.txt: {requirements_path}")
+    try:
+        with open(requirements_path, "r", encoding="utf-8") as req_file:
+            print("[Register] requirements_inference.txt contents:")
+            print(req_file.read())
+    except OSError as exc:
+        print(f"[Register] Failed to read requirements_inference.txt: {exc}")
+    model_builder = ModelBuilder(
+        model=booster,
+        model_path=model_path,
+        dependencies={"requirements": requirements_path},
+        schema_builder=schema_builder,
+        role_arn=role,
+        image_uri=image_uri,
+    )
+    return model_builder.build()
 
 
 def register(
@@ -52,45 +164,41 @@ def register(
     run_id: str,
 ):
     session = Session()
-    region = session.boto_region_name
-    framework_version = "1.7-1"
-    image_uri = image_uris.retrieve(framework="xgboost", region=region, version=framework_version)
+    sklearn_model = _build_sklearn_model(role, featurizer_model)
+    xgboost_model = _build_xgboost_model(role, booster)
 
-    work_dir = "/tmp/model_artifacts"
-    tar_path = _save_model_artifacts(featurizer_model, booster, work_dir)
-
-    s3_model_prefix = f"s3://{bucket_name}/{model_package_group_name}/model"
-    model_data = S3Uploader.upload(tar_path, s3_model_prefix)
-
-    evaluation_path = os.path.join(work_dir, "evaluation.json")
-    with open(evaluation_path, "w") as f:
-        json.dump(model_report_dict, f, indent=2)
-    s3_eval_prefix = f"s3://{bucket_name}/{model_package_group_name}/evaluation"
-    evaluation_s3_uri = S3Uploader.upload(evaluation_path, s3_eval_prefix)
+    eval_file_name = unique_name_from_base("evaluation")
+    eval_report_s3_uri = s3_path_join(
+        "s3://",
+        bucket_name,
+        model_package_group_name,
+        f"evaluation-report/{eval_file_name}.json",
+    )
+    s3_fs = s3fs.S3FileSystem()
+    with s3_fs.open(eval_report_s3_uri, "wb") as f:
+        f.write(json.dumps(model_report_dict).encode("utf-8"))
 
     model_metrics = ModelMetrics(
         model_statistics=MetricsSource(
-            s3_uri=evaluation_s3_uri,
+            s3_uri=eval_report_s3_uri,
             content_type="application/json",
         )
     )
 
-    model = XGBoostModel(
-        model_data=model_data,
-        image_uri=image_uri,
-        framework_version=framework_version,
+    pipeline_model_name = unique_name_from_base("flight-fare-pipeline-model")
+    pipeline_model = PipelineModel(
+        name=pipeline_model_name,
+        sagemaker_session=xgboost_model.sagemaker_session,
         role=role,
-        sagemaker_session=session,
+        models=[sklearn_model, xgboost_model],
     )
 
-    model_package = model.register(
+    pipeline_model.register(
+        content_types=["text/csv"],
+        response_types=["application/x-npy"],
         model_package_group_name=model_package_group_name,
         approval_status=model_approval_status,
         model_metrics=model_metrics,
-        content_types=["text/csv"],
-        response_types=["text/csv"],
-        inference_instances=["ml.m5.large"],
-        transform_instances=["ml.m5.large"],
     )
 
     mlflow = _get_mlflow()
@@ -103,9 +211,18 @@ def register(
                     {
                         "model_package_group_name": model_package_group_name,
                         "model_approval_status": model_approval_status,
-                        "model_data": model_data,
-                        "evaluation_s3_uri": evaluation_s3_uri,
+                        "evaluation_s3_uri": eval_report_s3_uri,
                     }
                 )
 
-    return model_package.model_package_arn
+    sagemaker_client = session.boto_session.client("sagemaker")
+    response = sagemaker_client.list_model_packages(
+        MaxResults=100,
+        ModelPackageGroupName=model_package_group_name,
+        ModelPackageType="Versioned",
+        SortBy="CreationTime",
+        SortOrder="Descending",
+    )
+    model_package_arn = response["ModelPackageSummaryList"][0]["ModelPackageArn"]
+    print(f"[Register] model_package_arn: {model_package_arn}")
+    return model_package_arn

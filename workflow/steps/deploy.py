@@ -1,7 +1,9 @@
 import os
 
 from sagemaker.model import ModelPackage
+from sagemaker.predictor import Predictor
 from sagemaker.session import Session
+from sagemaker.utils import unique_name_from_base
 
 
 def _get_mlflow():
@@ -30,18 +32,74 @@ def deploy(
         return None
 
     session = Session()
-    endpoint_name = f"{project_prefix}-endpoint"
+    endpoint_name = unique_name_from_base(f"{project_prefix}-endpoint")
+    endpoint_config_name = unique_name_from_base(f"{endpoint_name}-config")
+    sm_client = session.boto_session.client("sagemaker")
+    try:
+        sm_client.describe_endpoint_config(EndpointConfigName=endpoint_config_name)
+        endpoint_config_name = unique_name_from_base(f"{endpoint_name}-config")
+    except sm_client.exceptions.ClientError:
+        pass
 
+    model_name = unique_name_from_base(f"{project_prefix}-model")
     model = ModelPackage(
         model_package_arn=model_package_arn,
         role=role,
         sagemaker_session=session,
+        name=model_name,
     )
+    print(f"[Deploy] model_package_arn: {model_package_arn}")
+    print(f"[Deploy] endpoint_name: {endpoint_name}")
+    print(f"[Deploy] endpoint_config_name: {endpoint_config_name}")
+    print("[Deploy] volume_size_in_gb: 50")
 
-    predictor = model.deploy(
-        initial_instance_count=1,
-        instance_type="ml.m5.large",
+    instance_type = "ml.m5.large"
+    initial_instance_count = 1
+    volume_size_in_gb = 50
+
+    print(f"[Deploy] model_name: {model_name}")
+    model.create(instance_type=instance_type)
+
+    try:
+        response = sm_client.create_endpoint_config(
+            EndpointConfigName=endpoint_config_name,
+            ProductionVariants=[
+                {
+                    "VariantName": "AllTraffic",
+                    "ModelName": model_name,
+                    "InitialInstanceCount": initial_instance_count,
+                    "InstanceType": instance_type,
+                    "InitialVariantWeight": 1.0,
+                    "VolumeSizeInGB": volume_size_in_gb,
+                }
+            ],
+            Tags=[{"Key": "source", "Value": "deploy_step"}],
+        )
+        request_id = response.get("ResponseMetadata", {}).get("RequestId")
+        print(f"[Deploy] create_endpoint_config request_id: {request_id}")
+        config_details = sm_client.describe_endpoint_config(
+            EndpointConfigName=endpoint_config_name
+        )
+        print(f"[Deploy] endpoint_config_details: {config_details}")
+    except Exception as exc:
+        print(f"[Deploy] create_endpoint_config failed: {exc}")
+        raise
+
+    try:
+        response = sm_client.create_endpoint(
+            EndpointName=endpoint_name,
+            EndpointConfigName=endpoint_config_name,
+        )
+        request_id = response.get("ResponseMetadata", {}).get("RequestId")
+        print(f"[Deploy] create_endpoint request_id: {request_id}")
+    except Exception as exc:
+        print(f"[Deploy] create_endpoint failed: {exc}")
+        raise
+    session.wait_for_endpoint(endpoint_name)
+
+    predictor = Predictor(
         endpoint_name=endpoint_name,
+        sagemaker_session=session,
     )
 
     mlflow = _get_mlflow()
@@ -54,8 +112,10 @@ def deploy(
                     {
                         "model_package_arn": model_package_arn,
                         "endpoint_name": endpoint_name,
-                        "instance_type": "ml.m5.large",
-                        "initial_instance_count": 1,
+                        "endpoint_config_name": endpoint_config_name,
+                        "instance_type": instance_type,
+                        "initial_instance_count": initial_instance_count,
+                        "volume_size_in_gb": volume_size_in_gb,
                     }
                 )
 
