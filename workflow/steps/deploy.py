@@ -1,3 +1,4 @@
+import argparse
 import os
 
 from sagemaker.model import ModelPackage
@@ -120,3 +121,31 @@ def deploy(
                 )
 
     return predictor
+
+
+def _parse_bool(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Deploy model package in SageMaker.")
+    parser.add_argument("--role-arn", required=True)
+    parser.add_argument("--project-prefix", required=True)
+    parser.add_argument("--model-package-arn", required=True)
+    parser.add_argument("--deploy-model", required=True)
+    parser.add_argument("--experiment-name", required=True)
+    parser.add_argument("--run-id", required=True)
+    args = parser.parse_args()
+
+    deploy(
+        role=args.role_arn,
+        project_prefix=args.project_prefix,
+        model_package_arn=args.model_package_arn,
+        deploy_model=_parse_bool(args.deploy_model),
+        experiment_name=args.experiment_name,
+        run_id=args.run_id,
+    )
+
+
+if __name__ == "__main__":
+    main()

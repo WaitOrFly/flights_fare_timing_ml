@@ -1,17 +1,21 @@
 import os
+import tempfile
 import urllib
 
 import boto3
+import joblib
+import xgboost as xgb
 from steps.preprocess import preprocess
 from steps.train import train
 from steps.test import test
-from steps.register import register
-from steps.deploy import deploy
 
+from sagemaker import get_execution_role
+from sagemaker import image_uris
+from sagemaker.processing import ProcessingInput, ProcessingOutput, ScriptProcessor
 from sagemaker.s3 import S3Uploader
 from sagemaker.session import Session
-from sagemaker import get_execution_role
 from sagemaker.workflow.function_step import step
+from sagemaker.workflow.functions import Join, JsonGet
 from sagemaker.workflow.pipeline import Pipeline
 from sagemaker.workflow.parameters import (
     ParameterBoolean,
@@ -23,9 +27,10 @@ from sagemaker.workflow.parameters import (
 from sagemaker.workflow.execution_variables import ExecutionVariables
 from sagemaker.workflow.pipeline_definition_config import PipelineDefinitionConfig
 from sagemaker.workflow.pipeline_experiment_config import PipelineExperimentConfig
-from sagemaker.workflow.pipeline_context import LocalPipelineSession
+from sagemaker.workflow.pipeline_context import LocalPipelineSession, PipelineSession
+from sagemaker.workflow.properties import PropertyFile
+from sagemaker.workflow.steps import ProcessingStep
 
-from sagemaker import image_uris
 
 def download_data_and_upload_to_s3(bucket_name: str) -> str:
     file_name = "flight_fares.csv"
@@ -46,12 +51,43 @@ def download_data_and_upload_to_s3(bucket_name: str) -> str:
     return upload_s3_uri
 
 
+def _normalize_s3_uri(s3_uri: str) -> str:
+    if not s3_uri.startswith("s3://"):
+        raise ValueError("model_artifacts_s3_uri must start with 's3://'")
+    return s3_uri.rstrip("/")
+
+
+def package_model_artifacts(
+    featurizer_model,
+    booster: xgb.Booster,
+    model_artifacts_s3_uri: str,
+):
+    model_artifacts_s3_uri = _normalize_s3_uri(model_artifacts_s3_uri)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        featurizer_path = os.path.join(temp_dir, "featurizer.joblib")
+        booster_path = os.path.join(temp_dir, "xgboost-model.json")
+        joblib.dump(featurizer_model, featurizer_path)
+        booster.save_model(booster_path)
+
+        featurizer_s3_uri = S3Uploader.upload(
+            featurizer_path, f"{model_artifacts_s3_uri}/featurizer"
+        )
+        booster_s3_uri = S3Uploader.upload(
+            booster_path, f"{model_artifacts_s3_uri}/xgboost"
+        )
+    return {
+        "featurizer_s3_uri": featurizer_s3_uri,
+        "booster_s3_uri": booster_s3_uri,
+    }
+
+
 def create_steps(
     role,
     input_data_s3_uri,
     output_data_s3_uri,
     project_prefix,
     bucket_name,
+    model_artifacts_s3_uri,
     model_package_group_name,
     model_approval_status,
     eta_parameter,
@@ -68,6 +104,7 @@ def create_steps(
     experiment_name,
     run_name,
     mlflow_arn,
+    pipeline_session,
 ):
     env_variables = {"MLFLOW_TRACKING_ARN": mlflow_arn}
 
@@ -101,7 +138,7 @@ def create_steps(
         num_boost_round=num_boost_round_parameter,
         early_stopping_rounds=early_stopping_rounds_parameter,
         experiment_name=experiment_name,
-        run_id=preprocess_result[7],
+        run_id=run_name,
     )
 
     test_result = step(
@@ -115,44 +152,142 @@ def create_steps(
         booster=train_result,
         X_test=preprocess_result[4],
         y_test=preprocess_result[5],
+        bucket_name=bucket_name,
+        model_package_group_name=model_package_group_name,
         experiment_name=experiment_name,
-        run_id=preprocess_result[7],
+        run_id=run_name,
     )
 
-    register_result = step(
-        register,
-        name="Register",
-        job_name_prefix=f"{project_prefix}-Register",
+    package_model_result = step(
+        package_model_artifacts,
+        name="PackageModels",
+        job_name_prefix=f"{project_prefix}-PackageModels",
         keep_alive_period_in_seconds=300,
         environment_variables=env_variables,
     )(
-        role,
         featurizer_model=preprocess_result[6],
         booster=train_result,
-        bucket_name=bucket_name,
-        model_report_dict=test_result,
-        model_package_group_name=model_package_group_name,
-        model_approval_status=model_approval_status,
-        experiment_name=experiment_name,
-        run_id=preprocess_result[7],
+        model_artifacts_s3_uri=model_artifacts_s3_uri,
     )
 
-    deploy_result = step(
-        deploy,
+    register_output = PropertyFile(
+        name="RegisterOutput",
+        output_name="register_output",
+        path="model_package.json",
+    )
+    processing_instance_type = os.environ.get(
+        "REGISTER_PROCESSING_INSTANCE_TYPE", "ml.m5.xlarge"
+    )
+    processing_image_uri = image_uris.retrieve(
+        framework="sklearn",
+        region=Session().boto_region_name,
+        version="1.2-1",
+        instance_type=processing_instance_type,
+    )
+    register_processor = ScriptProcessor(
+        image_uri=processing_image_uri,
+        command=["python3"],
+        instance_type=processing_instance_type,
+        instance_count=1,
+        base_job_name=f"{project_prefix}-register",
+        role=role,
+        env=env_variables,
+        sagemaker_session=pipeline_session,
+    )
+    register_step_args = register_processor.run(
+        code=os.path.join(os.path.dirname(__file__), "steps", "register.py"),
+        inputs=[
+            ProcessingInput(
+                source=os.path.join(
+                    os.path.dirname(__file__), "requirements_inference.txt"
+                ),
+                destination="/opt/ml/processing/requirements",
+            ),
+            ProcessingInput(
+                source=package_model_result["featurizer_s3_uri"],
+                destination="/opt/ml/processing/featurizer",
+            ),
+            ProcessingInput(
+                source=package_model_result["booster_s3_uri"],
+                destination="/opt/ml/processing/xgboost",
+            ),
+        ],
+        outputs=[
+            ProcessingOutput(
+                output_name="register_output",
+                source="/opt/ml/processing/output",
+            )
+        ],
+        arguments=[
+            "--role-arn",
+            role,
+            "--featurizer-model-path",
+            "/opt/ml/processing/featurizer/featurizer.joblib",
+            "--xgboost-model-path",
+            "/opt/ml/processing/xgboost/xgboost-model.json",
+            "--model-report-path",
+            test_result,
+            "--bucket-name",
+            bucket_name,
+            "--model-package-group-name",
+            model_package_group_name,
+            "--model-approval-status",
+            model_approval_status,
+            "--experiment-name",
+            experiment_name,
+            "--run-id",
+            run_name,
+            "--output-model-package-path",
+            "/opt/ml/processing/output/model_package.json",
+            "--requirements-path",
+            "/opt/ml/processing/requirements/requirements_inference.txt",
+        ],
+    )
+    register_step = ProcessingStep(
+        name="Register",
+        step_args=register_step_args,
+        property_files=[register_output],
+    )
+    model_package_arn = JsonGet(
+        step_name=register_step.name,
+        property_file=register_output,
+        json_path="model_package_arn",
+    )
+
+    deploy_processor = ScriptProcessor(
+        image_uri=processing_image_uri,
+        command=["python3"],
+        instance_type=processing_instance_type,
+        instance_count=1,
+        base_job_name=f"{project_prefix}-deploy",
+        role=role,
+        env=env_variables,
+        sagemaker_session=pipeline_session,
+    )
+    deploy_step_args = deploy_processor.run(
+        code=os.path.join(os.path.dirname(__file__), "steps", "deploy.py"),
+        arguments=[
+            "--role-arn",
+            role,
+            "--project-prefix",
+            project_prefix,
+            "--model-package-arn",
+            model_package_arn,
+            "--deploy-model",
+            Join(on="", values=[deploy_model_parameter]),
+            "--experiment-name",
+            experiment_name,
+            "--run-id",
+            run_name,
+        ],
+    )
+    deploy_step = ProcessingStep(
         name="Deploy",
-        job_name_prefix=f"{project_prefix}-Deploy",
-        keep_alive_period_in_seconds=300,
-        environment_variables=env_variables,
-    )(
-        role,
-        project_prefix,
-        model_package_arn=register_result,
-        deploy_model=deploy_model_parameter,
-        experiment_name=experiment_name,
-        run_id=preprocess_result[7],
+        step_args=deploy_step_args,
+        depends_on=[register_step],
     )
 
-    return [deploy_result]
+    return [register_step, deploy_step]
 
 
 def get_mlflow_server_arn():
@@ -193,9 +328,15 @@ if __name__ == "__main__":
     output_data_s3_uri = os.environ.get(
         "OUTPUT_DATA_S3_URI", f"s3://{bucket_prefix}/processed"
     )
+    model_artifacts_s3_uri = os.environ.get(
+        "MODEL_ARTIFACTS_S3_URI", f"s3://{bucket_prefix}/model-artifacts"
+    )
 
     input_data_param = ParameterString(name="input_data_s3_uri", default_value=input_data_s3_uri)
     output_data_param = ParameterString(name="output_data_s3_uri", default_value=output_data_s3_uri)
+    model_artifacts_param = ParameterString(
+        name="model_artifacts_s3_uri", default_value=model_artifacts_s3_uri
+    )
 
     eta_parameter = ParameterFloat(name="eta", default_value=0.3)
     max_depth_parameter = ParameterInteger(name="max_depth", default_value=6)
@@ -209,12 +350,14 @@ if __name__ == "__main__":
     early_stopping_rounds_parameter = ParameterInteger(name="early_stopping_rounds", default_value=20)
     deploy_model_parameter = ParameterBoolean(name="deploy_model", default_value=True)
 
+    pipeline_session = LocalPipelineSession() if local_mode else PipelineSession()
     steps = create_steps(
         role,
         input_data_param,
         output_data_param,
         project_prefix,
         bucket_name,
+        model_artifacts_param,
         model_package_group_name,
         model_approval_status,
         eta_parameter,
@@ -231,18 +374,17 @@ if __name__ == "__main__":
         experiment_name,
         run_name,
         mlflow_arn,
+        pipeline_session,
     )
 
-    local_pipeline_session = LocalPipelineSession()
-    more_params = {}
-    if local_mode:
-        more_params["sagemaker_session"] = local_pipeline_session
+    more_params = {"sagemaker_session": pipeline_session}
 
     pipeline = Pipeline(
         name=pipeline_name,
         parameters=[
             input_data_param,
             output_data_param,
+            model_artifacts_param,
             deploy_model_parameter,
             eta_parameter,
             max_depth_parameter,

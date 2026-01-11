@@ -1,12 +1,15 @@
+import argparse
+import ast
 import io
 import json
 import os
-from typing import Dict
+import tempfile
+from typing import Dict, Optional, Tuple
 
+import boto3
 import joblib
 import numpy as np
 import pandas as pd
-import s3fs
 import xgboost as xgb
 from sagemaker import image_uris
 from sagemaker.model_metrics import MetricsSource, ModelMetrics
@@ -33,7 +36,9 @@ def _get_mlflow():
     return mlflow
 
 
-def _build_sklearn_model(role: str, featurizer_model):
+def _build_sklearn_model(
+    role: str, featurizer_model, model_dir: str, requirements_path: str
+):
     feature_names = getattr(featurizer_model, "feature_names_in_", None)
     if feature_names is None:
         feature_names = [
@@ -72,16 +77,12 @@ def _build_sklearn_model(role: str, featurizer_model):
         input_translator=SklearnRequestTranslator(),
     )
 
-    model_path = "sklearn_model"
-    os.makedirs(model_path, exist_ok=True)
-    joblib.dump(featurizer_model, os.path.join(model_path, "sklearn_model.joblib"))
+    os.makedirs(model_dir, exist_ok=True)
+    joblib.dump(featurizer_model, os.path.join(model_dir, "sklearn_model.joblib"))
 
     session = Session()
     image_uri = image_uris.retrieve(
         framework="sklearn", region=session.boto_region_name, version="1.2-1"
-    )
-    requirements_path = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "requirements_inference.txt")
     )
     print(f"[Register] requirements_inference.txt: {requirements_path}")
     try:
@@ -91,7 +92,7 @@ def _build_sklearn_model(role: str, featurizer_model):
     except OSError as exc:
         print(f"[Register] Failed to read requirements_inference.txt: {exc}")
     model_builder = ModelBuilder(
-        model_path=model_path,
+        model_path=model_dir,
         name="sklearn_featurizer",
         dependencies={"requirements": requirements_path},
         image_uri=image_uri,
@@ -103,7 +104,9 @@ def _build_sklearn_model(role: str, featurizer_model):
     return model_builder.build()
 
 
-def _build_xgboost_model(role: str, booster: xgb.Booster):
+def _build_xgboost_model(
+    role: str, booster: xgb.Booster, model_dir: str, requirements_path: str
+):
     class RequestTranslator(CustomPayloadTranslator):
         def serialize_payload_to_bytes(self, payload: object) -> bytes:
             return self._convert_numpy_to_bytes(payload)
@@ -123,16 +126,12 @@ def _build_xgboost_model(role: str, booster: xgb.Booster):
         input_translator=RequestTranslator(),
     )
 
-    model_path = "xgboost_model"
-    os.makedirs(model_path, exist_ok=True)
-    booster.save_model(os.path.join(model_path, "xgboost_model.bin"))
+    os.makedirs(model_dir, exist_ok=True)
+    booster.save_model(os.path.join(model_dir, "xgboost_model.bin"))
 
     session = Session()
     image_uri = image_uris.retrieve(
         framework="xgboost", region=session.boto_region_name, version="1.7-1"
-    )
-    requirements_path = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "requirements_inference.txt")
     )
     print(f"[Register] requirements_inference.txt: {requirements_path}")
     try:
@@ -142,14 +141,80 @@ def _build_xgboost_model(role: str, booster: xgb.Booster):
     except OSError as exc:
         print(f"[Register] Failed to read requirements_inference.txt: {exc}")
     model_builder = ModelBuilder(
-        model=booster,
-        model_path=model_path,
+        model_path=model_dir,
         dependencies={"requirements": requirements_path},
         schema_builder=schema_builder,
         role_arn=role,
         image_uri=image_uri,
     )
     return model_builder.build()
+
+
+def _parse_s3_uri(s3_uri: str) -> Tuple[str, str]:
+    if not s3_uri.startswith("s3://"):
+        raise ValueError(f"S3 uri must start with 's3://': {s3_uri}")
+    s3_path = s3_uri[5:]
+    bucket, _, key = s3_path.partition("/")
+    return bucket, key
+
+
+def _resolve_bucket_and_prefix(bucket_name: str) -> Tuple[str, str]:
+    if bucket_name.startswith("s3://"):
+        bucket, prefix = _parse_s3_uri(bucket_name)
+        return bucket, prefix.rstrip("/")
+    return bucket_name, ""
+
+
+def _download_if_s3(path_or_uri: str, local_dir: str) -> str:
+    if not path_or_uri.startswith("s3://"):
+        return path_or_uri
+
+    bucket, key = _parse_s3_uri(path_or_uri)
+    if not key:
+        raise ValueError(f"S3 uri must include an object key: {path_or_uri}")
+
+    local_path = os.path.join(local_dir, os.path.basename(key))
+    boto3.client("s3").download_file(bucket, key, local_path)
+    return local_path
+
+
+def _load_model_report(
+    report_json: Optional[str], report_path: Optional[str]
+) -> Dict[str, object]:
+    if report_json:
+        try:
+            return json.loads(report_json)
+        except json.JSONDecodeError:
+            return ast.literal_eval(report_json)
+    if report_path:
+        if report_path.startswith("s3://"):
+            with tempfile.TemporaryDirectory() as temp_dir:
+                local_path = _download_if_s3(report_path, temp_dir)
+                with open(local_path, "r", encoding="utf-8") as report_file:
+                    return json.load(report_file)
+        with open(report_path, "r", encoding="utf-8") as report_file:
+            return json.load(report_file)
+    raise ValueError("model_report_json or model_report_path must be provided.")
+
+
+def _load_featurizer(path_or_uri: str):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        local_path = _download_if_s3(path_or_uri, temp_dir)
+        return joblib.load(local_path)
+
+
+def _load_booster(path_or_uri: str) -> xgb.Booster:
+    booster = xgb.Booster()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        local_path = _download_if_s3(path_or_uri, temp_dir)
+        booster.load_model(local_path)
+    return booster
+
+
+def _resolve_requirements_path(custom_path: Optional[str]) -> str:
+    if custom_path:
+        return custom_path
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "requirements_inference.txt"))
 
 
 def register(
@@ -162,21 +227,32 @@ def register(
     model_approval_status: str,
     experiment_name: str,
     run_id: str,
+    requirements_path: Optional[str] = None,
 ):
     session = Session()
-    sklearn_model = _build_sklearn_model(role, featurizer_model)
-    xgboost_model = _build_xgboost_model(role, booster)
-
-    eval_file_name = unique_name_from_base("evaluation")
-    eval_report_s3_uri = s3_path_join(
-        "s3://",
-        bucket_name,
-        model_package_group_name,
-        f"evaluation-report/{eval_file_name}.json",
+    sklearn_model_dir = tempfile.mkdtemp()
+    xgboost_model_dir = tempfile.mkdtemp()
+    resolved_requirements_path = _resolve_requirements_path(requirements_path)
+    sklearn_model = _build_sklearn_model(
+        role, featurizer_model, sklearn_model_dir, resolved_requirements_path
     )
-    s3_fs = s3fs.S3FileSystem()
-    with s3_fs.open(eval_report_s3_uri, "wb") as f:
-        f.write(json.dumps(model_report_dict).encode("utf-8"))
+    xgboost_model = _build_xgboost_model(
+        role, booster, xgboost_model_dir, resolved_requirements_path
+    )
+
+    bucket, bucket_prefix = _resolve_bucket_and_prefix(bucket_name)
+    eval_file_name = unique_name_from_base("evaluation")
+    eval_prefix_parts = [bucket_prefix, model_package_group_name, "evaluation-report"]
+    eval_prefix = "/".join(part for part in eval_prefix_parts if part)
+    eval_report_s3_uri = s3_path_join(
+        "s3://", bucket, eval_prefix, f"{eval_file_name}.json"
+    )
+    eval_bucket, eval_key = _parse_s3_uri(eval_report_s3_uri)
+    session.boto_session.client("s3").put_object(
+        Bucket=eval_bucket,
+        Key=eval_key,
+        Body=json.dumps(model_report_dict).encode("utf-8"),
+    )
 
     model_metrics = ModelMetrics(
         model_statistics=MetricsSource(
@@ -226,3 +302,45 @@ def register(
     model_package_arn = response["ModelPackageSummaryList"][0]["ModelPackageArn"]
     print(f"[Register] model_package_arn: {model_package_arn}")
     return model_package_arn
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Register models using SageMaker.")
+    parser.add_argument("--role-arn", required=True)
+    parser.add_argument("--featurizer-model-path", required=True)
+    parser.add_argument("--xgboost-model-path", required=True)
+    parser.add_argument("--model-report-json")
+    parser.add_argument("--model-report-path")
+    parser.add_argument("--bucket-name", required=True)
+    parser.add_argument("--model-package-group-name", required=True)
+    parser.add_argument("--model-approval-status", required=True)
+    parser.add_argument("--experiment-name", required=True)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--output-model-package-path", required=True)
+    parser.add_argument("--requirements-path")
+    args = parser.parse_args()
+
+    model_report_dict = _load_model_report(args.model_report_json, args.model_report_path)
+    featurizer_model = _load_featurizer(args.featurizer_model_path)
+    booster = _load_booster(args.xgboost_model_path)
+
+    model_package_arn = register(
+        role=args.role_arn,
+        featurizer_model=featurizer_model,
+        booster=booster,
+        bucket_name=args.bucket_name,
+        model_report_dict=model_report_dict,
+        model_package_group_name=args.model_package_group_name,
+        model_approval_status=args.model_approval_status,
+        experiment_name=args.experiment_name,
+        run_id=args.run_id,
+        requirements_path=args.requirements_path,
+    )
+
+    os.makedirs(os.path.dirname(args.output_model_package_path), exist_ok=True)
+    with open(args.output_model_package_path, "w", encoding="utf-8") as output_file:
+        json.dump({"model_package_arn": model_package_arn}, output_file)
+
+
+if __name__ == "__main__":
+    main()
