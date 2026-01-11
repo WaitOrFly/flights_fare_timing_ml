@@ -4,7 +4,7 @@ SageMaker:
   PythonSDK:
     Modules:
       RemoteFunction:
-        S3RootUri: s3://sagemaker-us-east-1-202867842436/flights
+        S3RootUri: s3://sagemaker-us-east-1-840037627456/flights
         InstanceType: ml.m5.xlarge
         Dependencies: /home/sagemaker-user/flights_fare_timing_ml/workflow/requirements.txt
         IncludeLocalWorkDir: true

@@ -25,6 +25,7 @@ from sagemaker.workflow.pipeline_definition_config import PipelineDefinitionConf
 from sagemaker.workflow.pipeline_experiment_config import PipelineExperimentConfig
 from sagemaker.workflow.pipeline_context import LocalPipelineSession
 
+from sagemaker import image_uris
 
 def download_data_and_upload_to_s3(bucket_name: str) -> str:
     file_name = "flight_fares.csv"
