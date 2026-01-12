@@ -3,14 +3,50 @@ import ast
 import io
 import json
 import os
+import importlib.metadata
+import subprocess
+import sys
 import tempfile
 from typing import Dict, Optional, Tuple
 
-import boto3
 import joblib
 import numpy as np
 import pandas as pd
+
+
+def _ensure_packages(requirements) -> None:
+    command = [sys.executable, "-m", "pip", "install"]
+    subprocess.check_call([*command, *requirements])
+
+
+def _is_installed(package_name: str) -> bool:
+    try:
+        importlib.metadata.version(package_name)
+        return True
+    except importlib.metadata.PackageNotFoundError:
+        return False
+
+
+def _ensure_runtime_deps() -> None:
+    if not _is_installed("sagemaker"):
+        _ensure_packages(["sagemaker==2.219.0"])
+    _ensure_packages(
+        [
+            "boto3==1.28.57",
+            "botocore==1.31.85",
+            "s3transfer==0.7.0",
+            "scikit-learn==1.2.1",
+        ]
+    )
+    if not _is_installed("xgboost"):
+        _ensure_packages(["xgboost==1.7.6"])
+
+
+_ensure_runtime_deps()
+
+import boto3
 import xgboost as xgb
+import sklearn  # noqa: F401
 from sagemaker import image_uris
 from sagemaker.model_metrics import MetricsSource, ModelMetrics
 from sagemaker.pipeline import PipelineModel
@@ -34,6 +70,15 @@ def _get_mlflow():
 
     mlflow.set_tracking_uri(tracking_arn)
     return mlflow
+
+
+def _safe_start_run(mlflow, run_id: str):
+    if not run_id:
+        return mlflow.start_run()
+    try:
+        return mlflow.start_run(run_id=run_id)
+    except Exception:
+        return mlflow.start_run(run_name=run_id)
 
 
 def _build_sklearn_model(
@@ -120,6 +165,16 @@ def _build_xgboost_model(
             np.save(buffer, np_array)
             return buffer.getvalue()
 
+    class XgbModelSpec(InferenceSpec):
+        def invoke(self, input_object: object, model: object):
+            return model.predict(input_object)
+
+        def load(self, model_dir: str):
+            model_path = os.path.join(model_dir, "xgboost_model.bin")
+            xgb_model = xgb.Booster()
+            xgb_model.load_model(model_path)
+            return xgb_model
+
     schema_builder = SchemaBuilder(
         sample_input=np.zeros(8),
         sample_output=np.array([0.0]),
@@ -146,6 +201,8 @@ def _build_xgboost_model(
         schema_builder=schema_builder,
         role_arn=role,
         image_uri=image_uri,
+        model_server=ModelServer.TORCHSERVE,
+        inference_spec=XgbModelSpec(),
     )
     return model_builder.build()
 
@@ -280,7 +337,7 @@ def register(
     mlflow = _get_mlflow()
     if mlflow:
         mlflow.set_experiment(experiment_name)
-        with mlflow.start_run(run_id=run_id):
+        with _safe_start_run(mlflow, run_id):
             with mlflow.start_run(run_name="Register", nested=True):
                 mlflow.autolog()
                 mlflow.log_params(

@@ -1,5 +1,35 @@
 import argparse
+import importlib.metadata
 import os
+import subprocess
+import sys
+
+
+def _ensure_packages(requirements) -> None:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", *requirements])
+
+
+def _is_installed(package_name: str) -> bool:
+    try:
+        importlib.metadata.version(package_name)
+        return True
+    except importlib.metadata.PackageNotFoundError:
+        return False
+
+
+def _ensure_runtime_deps() -> None:
+    if not _is_installed("sagemaker"):
+        _ensure_packages(["sagemaker==2.219.0"])
+    _ensure_packages(
+        [
+            "boto3==1.28.57",
+            "botocore==1.31.85",
+            "s3transfer==0.7.0",
+        ]
+    )
+
+
+_ensure_runtime_deps()
 
 from sagemaker.model import ModelPackage
 from sagemaker.predictor import Predictor
@@ -19,6 +49,15 @@ def _get_mlflow():
 
     mlflow.set_tracking_uri(tracking_arn)
     return mlflow
+
+
+def _safe_start_run(mlflow, run_id: str):
+    if not run_id:
+        return mlflow.start_run()
+    try:
+        return mlflow.start_run(run_id=run_id)
+    except Exception:
+        return mlflow.start_run(run_name=run_id)
 
 
 def deploy(
@@ -106,7 +145,7 @@ def deploy(
     mlflow = _get_mlflow()
     if mlflow:
         mlflow.set_experiment(experiment_name)
-        with mlflow.start_run(run_id=run_id):
+        with _safe_start_run(mlflow, run_id):
             with mlflow.start_run(run_name="Deploy", nested=True):
                 mlflow.autolog()
                 mlflow.log_params(

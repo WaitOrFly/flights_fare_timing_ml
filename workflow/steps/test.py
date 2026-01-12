@@ -24,6 +24,15 @@ def _get_mlflow():
     return mlflow
 
 
+def _safe_start_run(mlflow, run_id: str):
+    if not run_id:
+        return mlflow.start_run()
+    try:
+        return mlflow.start_run(run_id=run_id)
+    except Exception:
+        return mlflow.start_run(run_name=run_id)
+
+
 def test(
     featurizer_model,
     booster: xgb.Booster,
@@ -46,7 +55,7 @@ def test(
     mlflow = _get_mlflow()
     if mlflow:
         mlflow.set_experiment(experiment_name)
-        with mlflow.start_run(run_id=run_id):
+        with _safe_start_run(mlflow, run_id):
             with mlflow.start_run(run_name="Test", nested=True):
                 mlflow.autolog()
                 for key, value in metrics.items():
