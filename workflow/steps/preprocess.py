@@ -84,11 +84,7 @@ class FlightFeatureEngineer:
             df['departure_datetime'].dt.month.isin(self.holiday_months)
         ).astype(int)
         
-        # 6. price_trend_7d: 가격 추세 (route별 평균 대비)
-        features['price_trend_7d'] = self._calculate_price_trend(df)
         
-        # 7. current_vs_historical_avg: 현재 가격 vs 평균 가격 비율
-        features['current_vs_historical_avg'] = self._calculate_price_ratio(df)
         
         # 8. route_hash: 출발지-목적지 해시
         features['route_hash'] = df.apply(
@@ -105,12 +101,9 @@ class FlightFeatureEngineer:
             self._get_duration_bucket
         )
         
-        # Target: price (optional log transform)
-        if self.apply_log_to_target:
-            features['price'] = np.log1p(df['Fare'])
-            features['price_original'] = df['Fare']  # 원본 보존
-        else:
-            features['price'] = df['Fare']
+        # Target: price (log transform)
+        features['price'] = np.log1p(df['Fare'])
+        features['price_original'] = df['Fare']  # ?? ??
         
         return features
     
@@ -237,8 +230,6 @@ class FlightPricePreprocessor:
         ]
         
         numeric_features = [
-            'price_trend_7d',
-            'current_vs_historical_avg',
             'stops_count',
             'days_until_departure_bucket'
         ]
@@ -462,60 +453,70 @@ def preprocess(input_data_s3_uri: str, output_data_s3_uri: str, experiment_name=
                 df_processed['Fare'] = df_processed['Fare'].clip(lower=lower, upper=upper)
                 print(f"✅ Outlier Clipping 완료")
                 print(f"  - {n_outliers:,}개의 값이 경계값으로 대체되었습니다")
-            
-            # 4. Feature Engineering
-            print(f"\n⚙️ Feature Engineering 시작...")
-            
-            apply_log = (OUTLIER_METHOD == 'log')
-            engineer = FlightFeatureEngineer(apply_log_to_target=apply_log)
-            df_features = engineer.transform(df_processed)
-            
-            # Feature Engineering 후 중복 제거
-            duplicates_after_fe = df_features.duplicated().sum()
-            if duplicates_after_fe > 0:
-                df_features_before = df_features.shape[0]
-                df_features = df_features.drop_duplicates()
-                df_features = df_features.reset_index(drop=True)
-                df_features_after = df_features.shape[0]
-                removed_fe = df_features_before - df_features_after
-                print(f"  - Feature Engineering 후 중복 제거: {removed_fe:,}개")
-                mlflow.log_metric("duplicates_removed_after_fe", removed_fe)
-            
-            print(f"✅ Feature Engineering 완료")
-            print(f"  - Feature 개수: {df_features.shape[1]}")
-            
-            mlflow.log_param("feature_count", df_features.shape[1])
-            mlflow.log_param("apply_log_to_target", apply_log)
-            
-            # 5. Train/Validation/Test Split (70/10/20)
-            print(f"\n📊 데이터셋 분할 중...")
-            
-            # Target과 features 분리
-            target_col = 'price'
-            drop_cols = [col for col in ['price', 'price_original'] if col in df_features.columns]
-            X = df_features.drop(columns=drop_cols)
-            y = df_features[target_col]
-            
-            # 먼저 Train(70%) / Temp(30%) 분할
-            X_train, X_temp, y_train, y_temp = train_test_split(
-                X, y, test_size=0.3, random_state=42
-            )
-            
-            # Temp를 Validation(10%) / Test(20%)로 분할
-            X_val, X_test, y_val, y_test = train_test_split(
-                X_temp, y_temp, test_size=2/3, random_state=42
-            )
-            
-            print(f"✅ 데이터셋 분할 완료 (Train 70% / Validation 10% / Test 20%)")
-            print(f"  - Train: {X_train.shape[0]:,}개")
-            print(f"  - Validation: {X_val.shape[0]:,}개")
-            print(f"  - Test: {X_test.shape[0]:,}개")
-            
-            mlflow.log_metric("train_size", X_train.shape[0])
-            mlflow.log_metric("val_size", X_val.shape[0])
-            mlflow.log_metric("test_size", X_test.shape[0])
+            # 4. Train/Validation/Test Split (70/10/20)
+            print("Split dataset (Train/Val/Test) ...")
 
-            # ===== CSV 저장용 데이터 구성 =====
+            df_train_raw, df_temp_raw = train_test_split(
+                df_processed, test_size=0.3, random_state=42
+            )
+            df_val_raw, df_test_raw = train_test_split(
+                df_temp_raw, test_size=2/3, random_state=42
+            )
+
+            print(f"???????????? ?????? ????? (Train 70% / Validation 10% / Test 20%)")
+            print(f"  - Train: {df_train_raw.shape[0]:,}???")
+            print(f"  - Validation: {df_val_raw.shape[0]:,}???")
+            print(f"  - Test: {df_test_raw.shape[0]:,}???")
+
+            mlflow.log_metric("train_size", df_train_raw.shape[0])
+            mlflow.log_metric("val_size", df_val_raw.shape[0])
+            mlflow.log_metric("test_size", df_test_raw.shape[0])
+
+            # 5. Feature Engineering
+            print("Feature engineering...")
+
+            apply_log = True
+            engineer = FlightFeatureEngineer(apply_log_to_target=apply_log)
+            df_train_features = engineer.transform(df_train_raw)
+            df_val_features = engineer.transform(df_val_raw)
+            df_test_features = engineer.transform(df_test_raw)
+
+            def _dedup_features(df_features, label):
+                duplicates = df_features.duplicated().sum()
+                if duplicates > 0:
+                    df_before = df_features.shape[0]
+                    df_features = df_features.drop_duplicates().reset_index(drop=True)
+                    removed = df_before - df_features.shape[0]
+                    print(f"  - Feature Engineering {label} ???????? ?????: {removed:,}???")
+                    mlflow.log_metric(f"duplicates_removed_after_fe_{label}", removed)
+                return df_features
+
+            df_train_features = _dedup_features(df_train_features, "train")
+            df_val_features = _dedup_features(df_val_features, "val")
+            df_test_features = _dedup_features(df_test_features, "test")
+
+            df_features = pd.concat(
+                [df_train_features, df_val_features, df_test_features],
+                ignore_index=True,
+            )
+
+            print(f"??Feature Engineering ?????")
+            print(f"  - Feature ??????: {df_train_features.shape[1]}")
+
+            mlflow.log_param("feature_count", df_train_features.shape[1])
+            mlflow.log_param("apply_log_to_target", apply_log)
+
+            target_col = 'price'
+            drop_cols = [col for col in ['price', 'price_original'] if col in df_train_features.columns]
+
+            X_train = df_train_features.drop(columns=drop_cols)
+            y_train = df_train_features[target_col]
+            X_val = df_val_features.drop(columns=drop_cols)
+            y_val = df_val_features[target_col]
+            X_test = df_test_features.drop(columns=drop_cols)
+            y_test = df_test_features[target_col]
+
+            # ===== CSV ??????? ????????????? =====
             train_df = X_train.copy()
             train_df["price"] = y_train.values
 
@@ -525,14 +526,15 @@ def preprocess(input_data_s3_uri: str, output_data_s3_uri: str, experiment_name=
             test_df = X_test.copy()
             test_df["price"] = y_test.values
 
-            # ===== S3 저장 =====
+            # ===== S3 ????=====
             upload_df_to_s3(train_df, output_data_s3_uri, "train.csv")
             upload_df_to_s3(val_df, output_data_s3_uri, "validation.csv")
             upload_df_to_s3(test_df, output_data_s3_uri, "test.csv")
 
             mlflow.log_param("output_data_s3_uri", output_data_s3_uri)
 
-            # 6. ML Preprocessing (인코딩 & 스케일링)
+            # 6. ML Preprocessing
+            print("Processing...")
             print(f"\n🔧 ML Preprocessing 시작...")
             
             featurizer_model = FlightPricePreprocessor(scale_numeric=True)

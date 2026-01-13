@@ -92,8 +92,6 @@ def _build_sklearn_model(
             "days_until_departure_bucket",
             "is_weekend_departure",
             "is_holiday_season",
-            "price_trend_7d",
-            "current_vs_historical_avg",
             "route_hash",
             "stops_count",
             "flight_duration_bucket",
@@ -327,7 +325,7 @@ def register(
     )
 
     pipeline_model.register(
-        content_types=["text/csv"],
+        content_types=["text/csv", "application/octet-stream"],
         response_types=["application/x-npy"],
         model_package_group_name=model_package_group_name,
         approval_status=model_approval_status,

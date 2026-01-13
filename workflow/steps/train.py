@@ -73,10 +73,12 @@ def train(
     )
 
     preds = booster.predict(dval)
+    preds_original = np.expm1(preds)
+    y_val_original = np.expm1(y_val)
     metrics: Dict[str, object] = {
-        "rmse": float(mean_squared_error(y_val, preds, squared=False)),
-        "mae": float(mean_absolute_error(y_val, preds)),
-        "r2": float(r2_score(y_val, preds)),
+        "rmse": float(mean_squared_error(y_val_original, preds_original, squared=False)),
+        "mae": float(mean_absolute_error(y_val_original, preds_original)),
+        "r2": float(r2_score(y_val_original, preds_original)),
     }
 
     mlflow = _get_mlflow()
