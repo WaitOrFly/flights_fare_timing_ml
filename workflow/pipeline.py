@@ -100,6 +100,7 @@ def create_steps(
     reg_alpha_parameter,
     num_boost_round_parameter,
     early_stopping_rounds_parameter,
+    base_score_parameter,
     deploy_model_parameter,
     experiment_name,
     run_name,
@@ -137,6 +138,7 @@ def create_steps(
         reg_alpha=reg_alpha_parameter,
         num_boost_round=num_boost_round_parameter,
         early_stopping_rounds=early_stopping_rounds_parameter,
+        base_score=base_score_parameter,
         experiment_name=experiment_name,
         run_id=run_name,
     )
@@ -338,16 +340,17 @@ if __name__ == "__main__":
         name="model_artifacts_s3_uri", default_value=model_artifacts_s3_uri
     )
 
-    eta_parameter = ParameterFloat(name="eta", default_value=0.3)
-    max_depth_parameter = ParameterInteger(name="max_depth", default_value=6)
-    min_child_weight_parameter = ParameterFloat(name="min_child_weight", default_value=1.0)
-    subsample_parameter = ParameterFloat(name="subsample", default_value=0.8)
-    colsample_bytree_parameter = ParameterFloat(name="colsample_bytree", default_value=0.8)
+    eta_parameter = ParameterFloat(name="eta", default_value=0.1)
+    max_depth_parameter = ParameterInteger(name="max_depth", default_value=8)
+    min_child_weight_parameter = ParameterFloat(name="min_child_weight", default_value=0.5)
+    subsample_parameter = ParameterFloat(name="subsample", default_value=0.9)
+    colsample_bytree_parameter = ParameterFloat(name="colsample_bytree", default_value=0.9)
     gamma_parameter = ParameterFloat(name="gamma", default_value=0.0)
     reg_lambda_parameter = ParameterFloat(name="reg_lambda", default_value=1.0)
     reg_alpha_parameter = ParameterFloat(name="reg_alpha", default_value=0.0)
-    num_boost_round_parameter = ParameterInteger(name="num_boost_round", default_value=200)
-    early_stopping_rounds_parameter = ParameterInteger(name="early_stopping_rounds", default_value=20)
+    num_boost_round_parameter = ParameterInteger(name="num_boost_round", default_value=800)
+    early_stopping_rounds_parameter = ParameterInteger(name="early_stopping_rounds", default_value=50)
+    base_score_parameter = ParameterFloat(name="base_score", default_value=-1.0)
     deploy_model_parameter = ParameterBoolean(name="deploy_model", default_value=True)
 
     pipeline_session = LocalPipelineSession() if local_mode else PipelineSession()
@@ -370,6 +373,7 @@ if __name__ == "__main__":
         reg_alpha_parameter,
         num_boost_round_parameter,
         early_stopping_rounds_parameter,
+        base_score_parameter,
         deploy_model_parameter,
         experiment_name,
         run_name,
@@ -396,6 +400,7 @@ if __name__ == "__main__":
             reg_alpha_parameter,
             num_boost_round_parameter,
             early_stopping_rounds_parameter,
+            base_score_parameter,
         ],
         steps=steps,
         pipeline_definition_config=PipelineDefinitionConfig(use_custom_job_prefix=True),

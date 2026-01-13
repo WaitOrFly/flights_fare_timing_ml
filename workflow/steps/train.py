@@ -45,11 +45,15 @@ def train(
     reg_alpha: float,
     num_boost_round: int,
     early_stopping_rounds: int,
+    base_score: float,
     experiment_name: str,
     run_id: str,
 ):
     dtrain = xgb.DMatrix(X_train, label=y_train)
     dval = xgb.DMatrix(X_val, label=y_val)
+
+    if not base_score or base_score <= 0:
+        base_score = float(np.mean(y_train))
 
     params = {
         "eta": eta,
@@ -60,6 +64,7 @@ def train(
         "gamma": gamma,
         "lambda": reg_lambda,
         "alpha": reg_alpha,
+        "base_score": base_score,
         "objective": "reg:squarederror",
         "eval_metric": "rmse",
     }
