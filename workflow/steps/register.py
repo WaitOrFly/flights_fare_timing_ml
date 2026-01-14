@@ -89,13 +89,36 @@ def _build_sklearn_model(
         feature_names = [
             "purchase_day_of_week",
             "purchase_time_bucket",
-            "days_until_departure_bucket",
+            "days_until_departure",
             "is_weekend_departure",
             "is_holiday_season",
             "route_hash",
             "stops_count",
             "flight_duration_bucket",
         ]
+
+    print(f"[Register] featurizer feature_names_in_: {getattr(featurizer_model, 'feature_names_in_', None)}")
+    print(f"[Register] final feature_names: {feature_names}")
+
+    def _build_dummy_row() -> pd.DataFrame:
+        defaults = {
+            "purchase_day_of_week": 0,
+            "purchase_time_bucket": "morning",
+            "days_until_departure": 7,
+            "is_weekend_departure": 0,
+            "is_holiday_season": 0,
+            "route_hash": 0,
+            "stops_count": 0,
+            "flight_duration_bucket": "short",
+        }
+        row = {name: defaults.get(name, 0) for name in feature_names}
+        return pd.DataFrame([row], columns=feature_names)
+
+    try:
+        dummy_df = _build_dummy_row()
+        output_dim = int(featurizer_model.transform(dummy_df).shape[1])
+    except Exception:
+        output_dim = len(feature_names)
 
     class SklearnRequestTranslator(CustomPayloadTranslator):
         def serialize_payload_to_bytes(self, payload: object) -> bytes:
@@ -116,7 +139,7 @@ def _build_sklearn_model(
 
     schema_builder = SchemaBuilder(
         sample_input=",".join(feature_names),
-        sample_output=np.zeros(8),
+        sample_output=np.zeros(output_dim),
         input_translator=SklearnRequestTranslator(),
     )
 
@@ -155,13 +178,27 @@ def _build_xgboost_model(
             return self._convert_numpy_to_bytes(payload)
 
         def deserialize_payload_from_stream(self, stream) -> xgb.DMatrix:
-            np_array = np.load(io.BytesIO(stream.read())).reshape((1, -1))
+            raw = stream.read()
+            np_array = _deserialize_numpy_payload(raw)
             return xgb.DMatrix(np_array)
 
         def _convert_numpy_to_bytes(self, np_array: np.ndarray) -> bytes:
             buffer = io.BytesIO()
             np.save(buffer, np_array)
             return buffer.getvalue()
+
+    def _deserialize_numpy_payload(raw: bytes) -> np.ndarray:
+        if raw.startswith(b"\x93NUMPY"):
+            np_array = np.load(io.BytesIO(raw))
+        else:
+            try:
+                decoded = json.loads(raw.decode("utf-8"))
+            except Exception as exc:
+                raise ValueError("Failed to decode payload for xgboost input") from exc
+            np_array = np.asarray(decoded)
+        if np_array.ndim == 1:
+            np_array = np_array.reshape((1, -1))
+        return np_array.astype(np.float32, copy=False)
 
     class XgbModelSpec(InferenceSpec):
         def invoke(self, input_object: object, model: object):

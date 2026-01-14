@@ -1,10 +1,12 @@
 import os
+import tempfile
 from typing import Dict
 
 import numpy as np
 import pandas as pd
 import xgboost as xgb
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+import boto3
 
 
 def _get_mlflow():
@@ -46,6 +48,7 @@ def train(
     num_boost_round: int,
     early_stopping_rounds: int,
     base_score: float,
+    model_artifacts_s3_uri: str,
     experiment_name: str,
     run_id: str,
 ):
@@ -77,9 +80,19 @@ def train(
         early_stopping_rounds=early_stopping_rounds,
     )
 
+    if model_artifacts_s3_uri:
+        _upload_booster_to_s3(booster, model_artifacts_s3_uri)
+
     preds = booster.predict(dval)
     preds_original = np.expm1(preds)
     y_val_original = np.expm1(y_val)
+
+    sample_count = min(5, len(preds))
+    if sample_count > 0:
+        print("[Train] sample preds (log):", preds[:sample_count])
+        print("[Train] sample y_val (log):", y_val[:sample_count])
+        print("[Train] sample preds (orig):", preds_original[:sample_count])
+        print("[Train] sample y_val (orig):", y_val_original[:sample_count])
     metrics: Dict[str, object] = {
         "rmse": float(mean_squared_error(y_val_original, preds_original, squared=False)),
         "mae": float(mean_absolute_error(y_val_original, preds_original)),
@@ -99,3 +112,22 @@ def train(
                         mlflow.log_metric(f"val_{key}", float(value))
 
     return booster
+
+
+def _upload_booster_to_s3(booster: xgb.Booster, s3_uri: str) -> None:
+    if not s3_uri.startswith("s3://"):
+        raise ValueError("model_artifacts_s3_uri must start with 's3://'")
+
+    s3_path = s3_uri.replace("s3://", "")
+    bucket = s3_path.split("/")[0]
+    prefix = "/".join(s3_path.split("/")[1:]).rstrip("/")
+    key = f"{prefix}/artifacts/xgboost_model.bin" if prefix else "artifacts/xgboost_model.bin"
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        model_path = os.path.join(temp_dir, "xgboost_model.bin")
+        booster.save_model(model_path)
+        s3 = boto3.client("s3")
+        with open(model_path, "rb") as handle:
+            s3.put_object(Bucket=bucket, Key=key, Body=handle)
+
+    print(f"[Train] S3 upload complete: s3://{bucket}/{key}")

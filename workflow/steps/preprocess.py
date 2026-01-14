@@ -67,12 +67,9 @@ class FlightFeatureEngineer:
             self._get_time_bucket
         )
         
-        # 3. days_until_departure_bucket: 출발까지 남은 일수
+        # 3. days_until_departure: 출발까지 남은 일수
         days_until = (df['departure_datetime'] - df['crawl_datetime']).dt.days
-        days_until_bucket = days_until.apply(self._get_days_until_bucket)
-        features['days_until_departure_bucket'] = days_until_bucket.map(
-            self.ordinal_mapping
-        )
+        features['days_until_departure'] = days_until
         
         # 4. is_weekend_departure: 주말 출발 여부
         features['is_weekend_departure'] = (
@@ -117,17 +114,6 @@ class FlightFeatureEngineer:
             return 'afternoon'
         else:
             return 'night'
-    
-    def _get_days_until_bucket(self, days: int) -> str:
-        """출발까지 남은 일수를 bucket으로 변환"""
-        if days < 7:
-            return 'very_close'
-        elif days < 14:
-            return 'close'
-        elif days < 30:
-            return 'medium'
-        else:
-            return 'far'
     
     def _hash_route(self, source: str, destination: str) -> int:
         """출발지-목적지를 해시값으로 변환"""
@@ -231,7 +217,7 @@ class FlightPricePreprocessor:
         
         numeric_features = [
             'stops_count',
-            'days_until_departure_bucket'
+            'days_until_departure'
         ]
         
         high_cardinality_features = ['route_hash']
@@ -286,11 +272,10 @@ class FlightPricePreprocessor:
     def _encode_ordinal_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """Ordinal feature 인코딩"""
         df = df.copy()
-        if 'days_until_departure_bucket' in df.columns:
-            if df['days_until_departure_bucket'].dtype == object:
-                df['days_until_departure_bucket'] = df['days_until_departure_bucket'].map(
-                    self.ordinal_mapping
-                )
+        if 'days_until_departure' in df.columns:
+            df['days_until_departure'] = pd.to_numeric(
+                df['days_until_departure'], errors='coerce'
+            )
         return df
     
     def fit(self, X: pd.DataFrame, y=None):
@@ -319,7 +304,7 @@ class FlightPricePreprocessor:
 
 def upload_df_to_s3(df: pd.DataFrame, s3_uri: str, filename: str):
     """
-    DataFrame을 CSV로 변환하여 S3에 업로드
+    Upload a DataFrame as CSV to S3.
     """
     if not s3_uri.startswith("s3://"):
         raise ValueError("output_data_s3_uri must start with 's3://'")
@@ -335,10 +320,30 @@ def upload_df_to_s3(df: pd.DataFrame, s3_uri: str, filename: str):
     s3.put_object(
         Bucket=bucket,
         Key=f"{prefix}/{filename}",
-        Body=csv_buffer.getvalue()
+        Body=csv_buffer.getvalue(),
     )
 
-    print(f"📤 S3 저장 완료: s3://{bucket}/{prefix}/{filename}")
+    print(f"S3 upload complete: s3://{bucket}/{prefix}/{filename}")
+
+
+def upload_file_to_s3(file_path: str, s3_uri: str, filename: str):
+    """
+    Upload a local file to S3.
+    """
+    if not s3_uri.startswith("s3://"):
+        raise ValueError("output_data_s3_uri must start with 's3://'")
+
+    s3_path = s3_uri.replace("s3://", "")
+    bucket = s3_path.split("/")[0]
+    prefix = "/".join(s3_path.split("/")[1:]).rstrip("/")
+    key = f"{prefix}/{filename}" if prefix else filename
+
+    s3 = boto3.client("s3")
+    with open(file_path, "rb") as handle:
+        s3.put_object(Bucket=bucket, Key=key, Body=handle)
+
+    print(f"S3 upload complete: s3://{bucket}/{key}")
+
 
 def detect_outliers_iqr(data, column, multiplier=1.5):
     """
@@ -575,6 +580,11 @@ def preprocess(input_data_s3_uri: str, output_data_s3_uri: str, experiment_name=
 
             joblib.dump(featurizer_transformer, model_file_path)
             mlflow.log_artifact(model_file_path, artifact_path="model")
+            upload_file_to_s3(
+                model_file_path,
+                output_data_s3_uri,
+                "artifacts/sklearn_model.joblib",
+            )
 
             # ===== 최종 결과 데이터셋 S3 저장 =====
             upload_df_to_s3(

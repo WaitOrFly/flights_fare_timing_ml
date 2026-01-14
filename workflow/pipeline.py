@@ -139,6 +139,7 @@ def create_steps(
         num_boost_round=num_boost_round_parameter,
         early_stopping_rounds=early_stopping_rounds_parameter,
         base_score=base_score_parameter,
+        model_artifacts_s3_uri=model_artifacts_s3_uri,
         experiment_name=experiment_name,
         run_id=run_name,
     )

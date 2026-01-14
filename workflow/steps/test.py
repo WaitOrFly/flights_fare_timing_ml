@@ -48,6 +48,13 @@ def test(
     preds_original = np.expm1(preds)
     y_test_original = np.expm1(y_test)
 
+    sample_count = min(5, len(preds))
+    if sample_count > 0:
+        print("[Test] sample preds (log):", preds[:sample_count])
+        print("[Test] sample y_test (log):", y_test[:sample_count])
+        print("[Test] sample preds (orig):", preds_original[:sample_count])
+        print("[Test] sample y_test (orig):", y_test_original[:sample_count])
+
     metrics: Dict[str, object] = {
         "rmse": float(mean_squared_error(y_test_original, preds_original, squared=False)),
         "mae": float(mean_absolute_error(y_test_original, preds_original)),

@@ -10,6 +10,8 @@ SageMaker:
         IncludeLocalWorkDir: true
         PreExecutionCommands:
           - "conda install -y -c conda-forge libstdcxx-ng libgcc-ng"
+          - "conda remove -y xgboost"
+          - "pip install --force-reinstall xgboost==1.7.6"
           - "sudo bash -c 'echo /opt/conda/lib > /etc/ld.so.conf.d/conda.conf'"
           - "sudo ldconfig"
           - "sudo chmod -R 777 /opt/ml/model"
