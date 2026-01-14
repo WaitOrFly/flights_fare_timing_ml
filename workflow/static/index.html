@@ -1,0 +1,598 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Flight Fare Timing</title>
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Sans+KR:wght@400;600;700&display=swap");
+
+    :root {
+      --ink: #0f172a;
+      --muted: #475569;
+      --accent: #0ea5a3;
+      --accent-strong: #0284c7;
+      --sun: #f97316;
+      --cream: #fff7ed;
+      --card: #fffdf9;
+      --line: rgba(15, 23, 42, 0.12);
+      --shadow: 0 20px 45px rgba(15, 23, 42, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      wi    body {
+      margin: 0;
+      font-family: "Space Grotesk", "IBM Plex Sans KR", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 600px at 15% 10%, rgba(14, 165, 163, 0.12), transparent 60%),
+        radial-gradient(900px 500px at 85% 25%, rgba(249, 115, 22, 0.15), transparent 60%),
+        linear-gradient(180deg, #fdf6ee 0%, #f5efe6 60%, #f3ebe2 100%);
+    }
+
+    .shell {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 56px 20px 80px;
+      position: relative;
+    }
+
+    .shell::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image: linear-gradient(rgba(15, 23, 42, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(15, 23, 42, 0.04) 1px, transparent 1px);
+      background-size: 28px 28px;
+      opacity: 0.6;
+      pointer-events: none;
+    }
+
+    header {
+      display: grid;
+      gap: 12px;
+      position: relative;
+    }
+
+    .eyebrow {
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+      font-size: 12px;
+      color: var(--accent-strong);
+      font-weight: 700;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(32px, 4vw, 48px);
+      line-height: 1.05;
+    }
+
+    .lead {
+      margin: 0;
+      color: var(--muted);
+      max-width: 640px;
+      font-size: 16px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 24px;
+      margin-top: 36px;
+      position: relative;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 24px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(4px);
+    }
+
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 20px;
+    }
+
+    form {
+      display: grid;
+      gap: 16px;
+    }
+
+    label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted);
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    input,
+    select {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(15, 23, 42, 0.15);
+      font-size: 15px;
+      font-family: inherit;
+      background: #fff;
+      transition: border 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    input:focus,
+    select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(14, 165, 163, 0.15);
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 14px;
+    }
+
+    button {
+      border: none;
+      cursor: pointer;
+      padding: 14px 18px;
+      border-radius: 14px;
+      font-weight: 700;
+      font-size: 15px;
+      color: #fff;
+      background: linear-gradient(120deg, var(--accent) 0%, var(--accent-strong) 60%, var(--sun) 120%);
+      box-shadow: 0 12px 24px rgba(2, 132, 199, 0.25);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    button:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 18px 30px rgba(2, 132, 199, 0.3);
+    }
+
+    .hint {
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: 6px;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(14, 165, 163, 0.12);
+      color: var(--accent-strong);
+      font-weight: 600;
+    }
+
+    .results {
+      display: grid;
+      gap: 18px;
+    }
+
+    .top3 {
+      display: grid;
+      gap: 10px;
+    }
+
+    .top3-item {
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(15, 23, 42, 0.1);
+      background: #fff;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 14px;
+    }
+
+    .trend {
+      padding: 16px;
+      border-radius: 14px;
+      background: linear-gradient(180deg, rgba(14, 165, 163, 0.08), rgba(255, 255, 255, 0.6));
+      border: 1px solid rgba(15, 23, 42, 0.08);
+    }
+
+    .trend svg,
+    .bars svg {
+      width: 100%;
+      height: 180px;
+      display: block;
+    }
+
+    .bars {
+      padding: 16px;
+      border-radius: 14px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      background: #fff;
+    }
+
+    .chart-wrap {
+      position: relative;
+    }
+
+    .tooltip {
+      position: absolute;
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: rgba(15, 23, 42, 0.92);
+      color: #f8fafc;
+      font-size: 12px;
+      transform: translate(-50%, -110%);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      white-space: nowrap;
+    }
+
+    .axis-label {
+      position: absolute;
+      left: 8px;
+      font-size: 11px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.7);
+      padding: 2px 6px;
+      border-radius: 999px;
+    }
+
+    .axis-label.top {
+      top: 6px;
+    }
+
+    .axis-label.bottom {
+      bottom: 6px;
+    }
+
+    pre {
+      margin: 0;
+      font-size: 12px;
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 14px;
+      border-radius: 12px;
+      overflow-x: auto;
+      max-height: 260px;
+    }
+
+    .fade-in {
+      animation: fadeIn 0.7s ease forwards;
+      opacity: 0;
+    }
+
+    .delay-1 { animation-delay: 0.1s; }
+    .delay-2 { animation-delay: 0.2s; }
+    .delay-3 { animation-delay: 0.3s; }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+rflow: visible;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        padding-top: 40px;
+      }
+      .card {
+        padding: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="fade-in">
+      <span class="eyebrow">WING IT</span>
+      <h1>WING IT</h1>
+      <p class="lead">Enter a route and dates. The service estimates the cheapest purchase time and a 30 day trend so you can book with confidence.</p>
+    </header>
+
+    <section class="layout">
+      <div class="card fade-in delay-1">
+        <h2>Request</h2>
+        <form id="fare-form">
+          <div>
+            <label for="origin">Origin</label>
+            <input id="origin" name="origin" maxlength="64" placeholder="South Korea" required />
+          </div>
+          <div>
+            <label for="destination">Destination</label>
+            <input id="destination" name="destination" maxlength="64" placeholder="Japan" required />
+          </div>
+          <div class="grid-2">
+            <div>
+              <label for="departure_date">Departure date</label>
+              <input id="departure_date" name="departure_date" type="date" required />
+            </div>
+            <div>
+              <label for="arrival_date">Arrival date</label>
+              <input id="arrival_date" name="arrival_date" type="date" required />
+            </div>
+          </div>
+          <div class="grid-2">
+            <div>
+              <label for="departure_time">Departure time</label>
+              <input id="departure_time" name="departure_time" type="time" required />
+            </div>
+            <div>
+              <label for="total_time">Total time (HH:MM)</label>
+              <input id="total_time" name="total_time" placeholder="02:30" required />
+            </div>
+          </div>
+          <div>
+            <label for="stops_count">Stops count</label>
+            <select id="stops_count" name="stops_count">
+              <option value="0">0 - Direct</option>
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3+</option>
+            </select>
+          </div>
+          <div>
+            <label for="fare">Fare</label>
+            <input id="fare" name="fare" type="number" min="0" step="1" placeholder="10000" required />
+          </div>
+          <button type="submit" id="submit-btn">Predict fare timing</button>
+          <div class="hint">API: POST https://shlvt0nsnb.execute-api.us-east-1.amazonaws.com/prod/predict</div>
+        </form>
+      </div>
+
+      <div class="card fade-in delay-2">
+        <h2>Result</h2>
+        <div class="results">
+          <span class="status" id="status">Waiting for request</span>
+          <div>
+            <strong>Top 3 cheapest purchase times</strong>
+            <div class="top3" id="top3"></div>
+            <div class="bars chart-wrap" id="top3-bars">
+              <svg id="bar-chart" viewBox="0 0 100 40" preserveAspectRatio="none"></svg>
+              <div class="tooltip" id="bar-tooltip"></div>
+            </div>
+          </div>
+          <div class="trend">
+            <strong>30 day price trend</strong>
+            <div class="chart-wrap">
+              <svg id="trend-chart" viewBox="0 0 100 40" preserveAspectRatio="none"></svg>
+              <div class="tooltip" id="trend-tooltip"></div>
+              <div class="axis-label top" id="trend-max"></div>
+              <div class="axis-label bottom" id="trend-min"></div>
+            </div>
+            <div class="hint" id="trend-hint">Submit a request to see the trend line.</div>
+          </div>
+          <div>
+            <strong>Raw response</strong>
+            <pre id="raw-response">{}</pre>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const API_URL = "https://shlvt0nsnb.execute-api.us-east-1.amazonaws.com/prod/predict";
+    const form = document.getElementById("fare-form");
+    const statusEl = document.getElementById("status");
+    const top3El = document.getElementById("top3");
+    const rawEl = document.getElementById("raw-response");
+    const chartEl = document.getElementById("trend-chart");
+    const trendHint = document.getElementById("trend-hint");
+    const trendTooltip = document.getElementById("trend-tooltip");
+    const trendMax = document.getElementById("trend-max");
+    const trendMin = document.getElementById("trend-min");
+    const barChartEl = document.getElementById("bar-chart");
+    const barTooltip = document.getElementById("bar-tooltip");
+    const submitBtn = document.getElementById("submit-btn");
+
+    const normalizeText = (el) => {
+      el.addEventListener("input", () => {
+        el.value = el.value.replace(/\\s+/g, " ").trimStart();
+      });
+    };
+
+    normalizeText(document.getElementById("origin"));
+    normalizeText(document.getElementById("destination"));
+
+    function setStatus(text, tone) {
+      statusEl.textContent = text;
+      statusEl.style.background = tone === "error" ? "rgba(249, 115, 22, 0.15)" : "rgba(14, 165, 163, 0.12)";
+      statusEl.style.color = tone === "error" ? "#c2410c" : "#0369a1";
+    }
+
+    function renderTop3(list) {
+      top3El.innerHTML = "";
+      if (!list || !list.length) {
+        top3El.innerHTML = "<div class=\"hint\">No ranking data returned.</div>";
+        barChartEl.innerHTML = "";
+        return;
+      }
+      list.forEach((item) => {
+        const row = document.createElement("div");
+        row.className = "top3-item";
+        row.innerHTML = `<span>#${item.rank} ${item.date}</span><strong>${item.time_bucket}</strong>`;
+        top3El.appendChild(row);
+      });
+      renderBars(list);
+    }
+
+    function renderTrend(points) {
+      chartEl.innerHTML = "";
+      trendTooltip.style.opacity = 0;
+      trendMax.textContent = "";
+      trendMin.textContent = "";
+      if (!points || !points.length) {
+        trendHint.textContent = "No trend data returned.";
+        return;
+      }
+      const values = points.map((p) => Number(p.predicted_price));
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const range = max - min || 1;
+      const coords = points.map((p, i) => {
+        const x = (i / (points.length - 1 || 1)) * 100;
+        const y = 36 - ((p.predicted_price - min) / range) * 30;
+        return `${x.toFixed(2)},${y.toFixed(2)}`;
+      });
+      const axis = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+      axis.setAttribute("points", "4,4 4,36 100,36");
+      axis.setAttribute("fill", "none");
+      axis.setAttribute("stroke", "rgba(15, 23, 42, 0.2)");
+      axis.setAttribute("stroke-width", "0.6");
+      chartEl.appendChild(axis);
+      const ticks = 4;
+      for (let i = 0; i <= ticks; i += 1) {
+        const y = 36 - (i / ticks) * 30;
+        const tick = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        tick.setAttribute("x1", "4");
+        tick.setAttribute("x2", "100");
+        tick.setAttribute("y1", y.toFixed(2));
+        tick.setAttribute("y2", y.toFixed(2));
+        tick.setAttribute("stroke", "rgba(15, 23, 42, 0.08)");
+        tick.setAttribute("stroke-width", "0.4");
+        chartEl.appendChild(tick);
+      }
+      const area = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+      area.setAttribute("points", `4,36 ${coords.join(" ")} 100,36`);
+      area.setAttribute("fill", "rgba(14, 165, 163, 0.12)");
+      chartEl.appendChild(area);
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+      path.setAttribute("points", coords.join(" "));
+      path.setAttribute("fill", "none");
+      path.setAttribute("stroke", "#0ea5a3");
+      path.setAttribute("stroke-width", "2.4");
+      path.setAttribute("stroke-linecap", "round");
+      path.setAttribute("stroke-linejoin", "round");
+      chartEl.appendChild(path);
+      points.forEach((p, i) => {
+        const x = (i / (points.length - 1 || 1)) * 100;
+        const y = 36 - ((p.predicted_price - min) / range) * 30;
+        const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        dot.setAttribute("cx", x.toFixed(2));
+        dot.setAttribute("cy", y.toFixed(2));
+        dot.setAttribute("r", "1.6");
+        dot.setAttribute("fill", "#0ea5a3");
+        dot.addEventListener("mouseenter", (event) => {
+          trendTooltip.textContent = `${p.date} | ${p.predicted_price}`;
+          trendTooltip.style.left = `${event.offsetX}px`;
+          trendTooltip.style.top = `${event.offsetY}px`;
+          trendTooltip.style.opacity = 1;
+        });
+        dot.addEventListener("mouseleave", () => {
+          trendTooltip.style.opacity = 0;
+        });
+        chartEl.appendChild(dot);
+      });
+      trendHint.textContent = `Showing ${points.length} days of predictions. Range ${min} to ${max}.`;
+      trendMax.textContent = `max ${max}`;
+      trendMin.textContent = `min ${min}`;
+    }
+
+    function renderBars(list) {
+      barChartEl.innerHTML = "";
+      barTooltip.style.opacity = 0;
+      if (!list || !list.length) {
+        return;
+      }
+      const values = list.map((item) => Number(item.predicted_price));
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const range = max - min || 1;
+      const chartTop = 6;
+      const chartBottom = 34;
+      const chartHeight = chartBottom - chartTop;
+      const zeroY = chartBottom - ((0 - min) / range) * chartHeight;
+      const barWidth = 18;
+      const baseLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      baseLine.setAttribute("x1", "4");
+      baseLine.setAttribute("x2", "96");
+      baseLine.setAttribute("y1", zeroY.toFixed(2));
+      baseLine.setAttribute("y2", zeroY.toFixed(2));
+      baseLine.setAttribute("stroke", "rgba(15, 23, 42, 0.15)");
+      baseLine.setAttribute("stroke-width", "0.6");
+      barChartEl.appendChild(baseLine);
+      list.forEach((item, index) => {
+        const value = Number(item.predicted_price);
+        const valueY = chartBottom - ((value - min) / range) * chartHeight;
+        const y = Math.min(zeroY, valueY);
+        const height = Math.max(Math.abs(zeroY - valueY), 2);
+        const x = 10 + index * 28;
+        const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        rect.setAttribute("x", x.toFixed(2));
+        rect.setAttribute("y", y.toFixed(2));
+        rect.setAttribute("width", barWidth);
+        rect.setAttribute("height", height.toFixed(2));
+        rect.setAttribute("rx", "2");
+        rect.setAttribute("fill", index === 0 ? "#0ea5a3" : "#94a3b8");
+        rect.addEventListener("mouseenter", (event) => {
+          barTooltip.textContent = `#${item.rank} ${item.time_bucket} | ${item.predicted_price}`;
+          barTooltip.style.left = `${event.offsetX}px`;
+          barTooltip.style.top = `${event.offsetY}px`;
+          barTooltip.style.opacity = 1;
+        });
+        rect.addEventListener("mouseleave", () => {
+          barTooltip.style.opacity = 0;
+        });
+        barChartEl.appendChild(rect);
+      });
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      submitBtn.disabled = true;
+      setStatus("Requesting prediction...", "ok");
+
+      const payload = {
+        origin: form.origin.value.trim().toUpperCase(),
+        destination: form.destination.value.trim().toUpperCase(),
+        departure_date: form.departure_date.value,
+        arrival_date: form.arrival_date.value,
+        departure_time: form.departure_time.value,
+        total_time: form.total_time.value.trim(),
+        stops_count: Number(form.stops_count.value),
+        fare: Number(form.fare.value),
+      };
+
+      rawEl.textContent = JSON.stringify(payload, null, 2);
+
+      try {
+        const response = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await response.json();
+        let body = data;
+        if (data && typeof data.body === "string") {
+          try {
+            body = JSON.parse(data.body);
+          } catch (err) {
+            body = { error: "Could not parse body", raw: data.body };
+          }
+        }
+
+        if (!response.ok) {
+          setStatus(`Error ${response.status}`, "error");
+        } else {
+          setStatus("Prediction received", "ok");
+        }
+
+        rawEl.textContent = JSON.stringify(body, null, 2);
+        renderTop3(body.top_3_cheapest_purchase_times || []);
+        renderTrend(body.price_trend_30d ? body.price_trend_30d.data : []);

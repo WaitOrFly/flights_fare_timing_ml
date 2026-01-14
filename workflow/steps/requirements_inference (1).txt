@@ -1,0 +1,10 @@
+sagemaker==2.219.0
+xgboost==1.7.6
+scikit-learn==1.2.1
+protobuf==3.20.3
+pandas
+numpy
+markupsafe==2.0.1
+jinja2==3.0.3
+cloudpickle==2.2.1
+joblib==1.2.0
