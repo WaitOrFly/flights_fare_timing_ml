@@ -1,20 +1,13 @@
 import os
-import tempfile
 import urllib
 
 import boto3
-import joblib
-import xgboost as xgb
-from steps.preprocess import preprocess
-from steps.train import train
-from steps.test import test
 
 from sagemaker import get_execution_role
 from sagemaker import image_uris
 from sagemaker.processing import ProcessingInput, ProcessingOutput, ScriptProcessor
 from sagemaker.s3 import S3Uploader
 from sagemaker.session import Session
-from sagemaker.workflow.function_step import step
 from sagemaker.workflow.functions import Join, JsonGet
 from sagemaker.workflow.pipeline import Pipeline
 from sagemaker.workflow.parameters import (
@@ -51,36 +44,6 @@ def download_data_and_upload_to_s3(bucket_name: str) -> str:
     return upload_s3_uri
 
 
-def _normalize_s3_uri(s3_uri: str) -> str:
-    if not s3_uri.startswith("s3://"):
-        raise ValueError("model_artifacts_s3_uri must start with 's3://'")
-    return s3_uri.rstrip("/")
-
-
-def package_model_artifacts(
-    featurizer_model,
-    booster: xgb.Booster,
-    model_artifacts_s3_uri: str,
-):
-    model_artifacts_s3_uri = _normalize_s3_uri(model_artifacts_s3_uri)
-    with tempfile.TemporaryDirectory() as temp_dir:
-        featurizer_path = os.path.join(temp_dir, "featurizer.joblib")
-        booster_path = os.path.join(temp_dir, "xgboost-model.json")
-        joblib.dump(featurizer_model, featurizer_path)
-        booster.save_model(booster_path)
-
-        featurizer_s3_uri = S3Uploader.upload(
-            featurizer_path, f"{model_artifacts_s3_uri}/featurizer"
-        )
-        booster_s3_uri = S3Uploader.upload(
-            booster_path, f"{model_artifacts_s3_uri}/xgboost"
-        )
-    return {
-        "featurizer_s3_uri": featurizer_s3_uri,
-        "booster_s3_uri": booster_s3_uri,
-    }
-
-
 def create_steps(
     role,
     input_data_s3_uri,
@@ -109,83 +72,197 @@ def create_steps(
 ):
     env_variables = {"MLFLOW_TRACKING_ARN": mlflow_arn}
 
-    preprocess_result = step(
-        preprocess,
-        name="Preprocess",
-        job_name_prefix=f"{project_prefix}-Preprocess",
-        keep_alive_period_in_seconds=300,
-        environment_variables=env_variables,
-    )(input_data_s3_uri, output_data_s3_uri, experiment_name, run_name)
-
-    train_result = step(
-        train,
-        name="Train",
-        job_name_prefix=f"{project_prefix}-Train",
-        keep_alive_period_in_seconds=300,
-        environment_variables=env_variables,
-    )(
-        X_train=preprocess_result[0],
-        y_train=preprocess_result[1],
-        X_val=preprocess_result[2],
-        y_val=preprocess_result[3],
-        eta=eta_parameter,
-        max_depth=max_depth_parameter,
-        min_child_weight=min_child_weight_parameter,
-        subsample=subsample_parameter,
-        colsample_bytree=colsample_bytree_parameter,
-        gamma=gamma_parameter,
-        reg_lambda=reg_lambda_parameter,
-        reg_alpha=reg_alpha_parameter,
-        num_boost_round=num_boost_round_parameter,
-        early_stopping_rounds=early_stopping_rounds_parameter,
-        base_score=base_score_parameter,
-        model_artifacts_s3_uri=model_artifacts_s3_uri,
-        experiment_name=experiment_name,
-        run_id=run_name,
-    )
-
-    test_result = step(
-        test,
-        name="Evaluate",
-        job_name_prefix=f"{project_prefix}-Test",
-        keep_alive_period_in_seconds=300,
-        environment_variables=env_variables,
-    )(
-        featurizer_model=preprocess_result[6],
-        booster=train_result,
-        X_test=preprocess_result[4],
-        y_test=preprocess_result[5],
-        bucket_name=bucket_name,
-        model_package_group_name=model_package_group_name,
-        experiment_name=experiment_name,
-        run_id=run_name,
-    )
-
-    package_model_result = step(
-        package_model_artifacts,
-        name="PackageModels",
-        job_name_prefix=f"{project_prefix}-PackageModels",
-        keep_alive_period_in_seconds=300,
-        environment_variables=env_variables,
-    )(
-        featurizer_model=preprocess_result[6],
-        booster=train_result,
-        model_artifacts_s3_uri=model_artifacts_s3_uri,
-    )
-
-    register_output = PropertyFile(
-        name="RegisterOutput",
-        output_name="register_output",
-        path="model_package.json",
-    )
     processing_instance_type = os.environ.get(
-        "REGISTER_PROCESSING_INSTANCE_TYPE", "ml.m5.xlarge"
+        "PROCESSING_INSTANCE_TYPE", "ml.m5.xlarge"
     )
     processing_image_uri = image_uris.retrieve(
         framework="sklearn",
         region=Session().boto_region_name,
         version="1.2-1",
         instance_type=processing_instance_type,
+    )
+    steps_dir = os.path.join(os.path.dirname(__file__), "steps")
+
+    preprocess_output_s3 = Join(
+        on="/", values=[output_data_s3_uri, "processing", "preprocess"]
+    )
+    preprocess_processor = ScriptProcessor(
+        image_uri=processing_image_uri,
+        command=["python3"],
+        instance_type=processing_instance_type,
+        instance_count=1,
+        base_job_name=f"{project_prefix}-preprocess",
+        role=role,
+        env=env_variables,
+        sagemaker_session=pipeline_session,
+    )
+    preprocess_step_args = preprocess_processor.run(
+        code=os.path.join(steps_dir, "run_preprocess.py"),
+        inputs=[
+            ProcessingInput(
+                source=steps_dir,
+                destination="/opt/ml/processing/code",
+            )
+        ],
+        outputs=[
+            ProcessingOutput(
+                output_name="preprocess_output",
+                source="/opt/ml/processing/output",
+                destination=preprocess_output_s3,
+            )
+        ],
+        arguments=[
+            "--input-data-s3-uri",
+            input_data_s3_uri,
+            "--output-data-s3-uri",
+            output_data_s3_uri,
+            "--experiment-name",
+            experiment_name,
+            "--run-id",
+            run_name,
+        ],
+    )
+    preprocess_step = ProcessingStep(
+        name="Preprocess",
+        step_args=preprocess_step_args,
+    )
+
+    train_output_s3 = Join(on="/", values=[output_data_s3_uri, "processing", "train"])
+    train_processor = ScriptProcessor(
+        image_uri=processing_image_uri,
+        command=["python3"],
+        instance_type=processing_instance_type,
+        instance_count=1,
+        base_job_name=f"{project_prefix}-train",
+        role=role,
+        env=env_variables,
+        sagemaker_session=pipeline_session,
+    )
+    train_step_args = train_processor.run(
+        code=os.path.join(steps_dir, "run_train.py"),
+        inputs=[
+            ProcessingInput(
+                source=steps_dir,
+                destination="/opt/ml/processing/code",
+            ),
+            ProcessingInput(
+                source=preprocess_step.properties.ProcessingOutputConfig.Outputs[
+                    "preprocess_output"
+                ].S3Output.S3Uri,
+                destination="/opt/ml/processing/input",
+            ),
+        ],
+        outputs=[
+            ProcessingOutput(
+                output_name="train_output",
+                source="/opt/ml/processing/output",
+                destination=train_output_s3,
+            )
+        ],
+        arguments=[
+            "--input-dir",
+            "/opt/ml/processing/input",
+            "--output-dir",
+            "/opt/ml/processing/output",
+            "--eta",
+            Join(on="", values=[eta_parameter]),
+            "--max-depth",
+            Join(on="", values=[max_depth_parameter]),
+            "--min-child-weight",
+            Join(on="", values=[min_child_weight_parameter]),
+            "--subsample",
+            Join(on="", values=[subsample_parameter]),
+            "--colsample-bytree",
+            Join(on="", values=[colsample_bytree_parameter]),
+            "--gamma",
+            Join(on="", values=[gamma_parameter]),
+            "--reg-lambda",
+            Join(on="", values=[reg_lambda_parameter]),
+            "--reg-alpha",
+            Join(on="", values=[reg_alpha_parameter]),
+            "--num-boost-round",
+            Join(on="", values=[num_boost_round_parameter]),
+            "--early-stopping-rounds",
+            Join(on="", values=[early_stopping_rounds_parameter]),
+            "--base-score",
+            Join(on="", values=[base_score_parameter]),
+            "--model-artifacts-s3-uri",
+            model_artifacts_s3_uri,
+            "--experiment-name",
+            experiment_name,
+            "--run-id",
+            run_name,
+        ],
+    )
+    train_step = ProcessingStep(
+        name="Train",
+        step_args=train_step_args,
+    )
+
+    test_output_s3 = Join(on="/", values=[output_data_s3_uri, "processing", "test"])
+    test_processor = ScriptProcessor(
+        image_uri=processing_image_uri,
+        command=["python3"],
+        instance_type=processing_instance_type,
+        instance_count=1,
+        base_job_name=f"{project_prefix}-test",
+        role=role,
+        env=env_variables,
+        sagemaker_session=pipeline_session,
+    )
+    test_step_args = test_processor.run(
+        code=os.path.join(steps_dir, "run_test.py"),
+        inputs=[
+            ProcessingInput(
+                source=steps_dir,
+                destination="/opt/ml/processing/code",
+            ),
+            ProcessingInput(
+                source=preprocess_step.properties.ProcessingOutputConfig.Outputs[
+                    "preprocess_output"
+                ].S3Output.S3Uri,
+                destination="/opt/ml/processing/input",
+            ),
+            ProcessingInput(
+                source=train_step.properties.ProcessingOutputConfig.Outputs[
+                    "train_output"
+                ].S3Output.S3Uri,
+                destination="/opt/ml/processing/model",
+            ),
+        ],
+        outputs=[
+            ProcessingOutput(
+                output_name="test_output",
+                source="/opt/ml/processing/output",
+                destination=test_output_s3,
+            )
+        ],
+        arguments=[
+            "--input-dir",
+            "/opt/ml/processing/input",
+            "--model-dir",
+            "/opt/ml/processing/model",
+            "--output-dir",
+            "/opt/ml/processing/output",
+            "--bucket-name",
+            bucket_name,
+            "--model-package-group-name",
+            model_package_group_name,
+            "--experiment-name",
+            experiment_name,
+            "--run-id",
+            run_name,
+        ],
+    )
+    test_step = ProcessingStep(
+        name="Evaluate",
+        step_args=test_step_args,
+    )
+
+    register_output = PropertyFile(
+        name="RegisterOutput",
+        output_name="register_output",
+        path="model_package.json",
     )
     register_processor = ScriptProcessor(
         image_uri=processing_image_uri,
@@ -207,12 +284,22 @@ def create_steps(
                 destination="/opt/ml/processing/requirements",
             ),
             ProcessingInput(
-                source=package_model_result["featurizer_s3_uri"],
-                destination="/opt/ml/processing/featurizer",
+                source=preprocess_step.properties.ProcessingOutputConfig.Outputs[
+                    "preprocess_output"
+                ].S3Output.S3Uri,
+                destination="/opt/ml/processing/preprocess",
             ),
             ProcessingInput(
-                source=package_model_result["booster_s3_uri"],
-                destination="/opt/ml/processing/xgboost",
+                source=train_step.properties.ProcessingOutputConfig.Outputs[
+                    "train_output"
+                ].S3Output.S3Uri,
+                destination="/opt/ml/processing/train",
+            ),
+            ProcessingInput(
+                source=test_step.properties.ProcessingOutputConfig.Outputs[
+                    "test_output"
+                ].S3Output.S3Uri,
+                destination="/opt/ml/processing/test",
             ),
         ],
         outputs=[
@@ -225,11 +312,11 @@ def create_steps(
             "--role-arn",
             role,
             "--featurizer-model-path",
-            "/opt/ml/processing/featurizer/featurizer.joblib",
+            "/opt/ml/processing/preprocess/featurizer/sklearn_model.joblib",
             "--xgboost-model-path",
-            "/opt/ml/processing/xgboost/xgboost-model.json",
+            "/opt/ml/processing/train/model/xgboost_model.bin",
             "--model-report-path",
-            test_result,
+            "/opt/ml/processing/test/model_report.json",
             "--bucket-name",
             bucket_name,
             "--model-package-group-name",
@@ -290,7 +377,7 @@ def create_steps(
         depends_on=[register_step],
     )
 
-    return [register_step, deploy_step]
+    return [preprocess_step, train_step, test_step, register_step, deploy_step]
 
 
 def get_mlflow_server_arn():

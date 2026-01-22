@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 
+import boto3
 
 def _ensure_packages(requirements) -> None:
     subprocess.check_call([sys.executable, "-m", "pip", "install", *requirements])
@@ -60,6 +61,18 @@ def _safe_start_run(mlflow, run_id: str):
         return mlflow.start_run(run_name=run_id)
 
 
+def _get_region() -> str:
+    region = (
+        os.environ.get("AWS_REGION")
+        or os.environ.get("AWS_DEFAULT_REGION")
+    )
+    if not region:
+        region = boto3.session.Session().region_name
+    if not region:
+        raise ValueError("AWS region is required to create SageMaker Session.")
+    return region
+
+
 def deploy(
     role: str,
     project_prefix: str,
@@ -71,7 +84,7 @@ def deploy(
     if not deploy_model:
         return None
 
-    session = Session()
+    session = Session(boto_session=boto3.session.Session(region_name=_get_region()))
     endpoint_name = unique_name_from_base(f"{project_prefix}-endpoint")
     endpoint_config_name = unique_name_from_base(f"{endpoint_name}-config")
     sm_client = session.boto_session.client("sagemaker")

@@ -35,7 +35,7 @@ def _ensure_runtime_deps() -> None:
             "boto3==1.28.57",
             "botocore==1.31.85",
             "s3transfer==0.7.0",
-            "scikit-learn==1.2.1",
+            "scikit-learn==1.3.2",
         ]
     )
     if not _is_installed("xgboost"):
@@ -56,6 +56,17 @@ from sagemaker.serve.builder.model_builder import ModelBuilder
 from sagemaker.serve.builder.schema_builder import SchemaBuilder
 from sagemaker.session import Session
 from sagemaker.utils import unique_name_from_base
+
+
+def _get_region() -> str:
+    region = (
+        os.environ.get("AWS_REGION")
+        or os.environ.get("AWS_DEFAULT_REGION")
+        or boto3.session.Session().region_name
+    )
+    if not region:
+        raise ValueError("AWS region is required to create SageMaker Session.")
+    return region
 
 
 def _get_mlflow():
@@ -146,7 +157,7 @@ def _build_sklearn_model(
     os.makedirs(model_dir, exist_ok=True)
     joblib.dump(featurizer_model, os.path.join(model_dir, "sklearn_model.joblib"))
 
-    session = Session()
+    session = Session(boto_session=boto3.session.Session(region_name=_get_region()))
     image_uri = image_uris.retrieve(
         framework="sklearn", region=session.boto_region_name, version="1.2-1"
     )
@@ -166,8 +177,9 @@ def _build_sklearn_model(
         model_server=ModelServer.TORCHSERVE,
         inference_spec=SklearnModelSpec(),
         role_arn=role,
+        sagemaker_session=session,
     )
-    return model_builder.build()
+    return model_builder.build(sagemaker_session=session)
 
 
 def _build_xgboost_model(
@@ -219,7 +231,7 @@ def _build_xgboost_model(
     os.makedirs(model_dir, exist_ok=True)
     booster.save_model(os.path.join(model_dir, "xgboost_model.bin"))
 
-    session = Session()
+    session = Session(boto_session=boto3.session.Session(region_name=_get_region()))
     image_uri = image_uris.retrieve(
         framework="xgboost", region=session.boto_region_name, version="1.7-1"
     )
@@ -238,8 +250,9 @@ def _build_xgboost_model(
         image_uri=image_uri,
         model_server=ModelServer.TORCHSERVE,
         inference_spec=XgbModelSpec(),
+        sagemaker_session=session,
     )
-    return model_builder.build()
+    return model_builder.build(sagemaker_session=session)
 
 
 def _parse_s3_uri(s3_uri: str) -> Tuple[str, str]:
@@ -321,7 +334,7 @@ def register(
     run_id: str,
     requirements_path: Optional[str] = None,
 ):
-    session = Session()
+    session = Session(boto_session=boto3.session.Session(region_name=_get_region()))
     sklearn_model_dir = tempfile.mkdtemp()
     xgboost_model_dir = tempfile.mkdtemp()
     resolved_requirements_path = _resolve_requirements_path(requirements_path)
