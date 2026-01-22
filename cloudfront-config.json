@@ -1,0 +1,26 @@
+{
+    "CallerReference": "static-website-$(date +%s)",
+    "Origins": {
+        "Quantity": 1,
+        "Items": [
+            {
+                "Id": "S3-origin",
+                "DomainName": "your-bucket-name.s3.amazonaws.com",
+                "S3OriginConfig": {
+                    "OriginAccessIdentity": ""
+                }
+            }
+        ]
+    },
+    "DefaultCacheBehavior": {
+        "TargetOriginId": "S3-origin",
+        "ViewerProtocolPolicy": "allow-all",
+        "TrustedSigners": {
+            "Enabled": false,
+            "Quantity": 0
+        },
+        "MinTTL": 0
+    },
+    "Comment": "Static website",
+    "Enabled": true
+}
