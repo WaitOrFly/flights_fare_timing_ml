@@ -29,7 +29,7 @@ XGBoost Regressor
 | `stops_count`                 | numeric                      | as-is    | 경유 횟수. 경유 수 증가에 따른 가격 차이를 반영.                                                                      |
 | `flight_duration_bucket`      | categorical                  | one-hot  | 비행 시간을 구간화(`short`, `medium`, `long`)한 변수. 장·단거리 항공권 가격 특성을 반영.                              |
 
-### 🎯 Target
+### Target
 
 | Name    | Type    | Description             |
 | ------- | ------- | ----------------------- |
