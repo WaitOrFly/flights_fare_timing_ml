@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fare Timing Dashboard</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500&family=Space+Grotesk:wght@400;600&display=swap");
+
+      :root {
+        --bg-1: #f7f4ee;
+        --bg-2: #f1e9dc;
+        --ink: #1c1b18;
+        --muted: #5d5a55;
+        --accent: #176b5b;
+        --accent-2: #c96e3a;
+        --card: #fff7ec;
+        --stroke: #dfd3c2;
+        --shadow: 0 20px 50px rgba(28, 27, 24, 0.12);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Space Grotesk", sans-serif;
+        color: var(--ink);
+        background: radial-gradient(circle at top left, #fdf8f1, var(--bg-1));
+      }
+
+      .page {
+        min-height: 100vh;
+        padding: 48px 7vw 64px;
+        background: linear-gradient(140deg, var(--bg-1), var(--bg-2));
+        position: relative;
+        overflow: hidden;
+      }
+
+      .page::before,
+      .page::after {
+        content: "";
+        position: absolute;
+        width: 520px;
+        height: 520px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(23, 107, 91, 0.18), transparent 70%);
+        top: -120px;
+        right: -160px;
+        z-index: 0;
+      }
+
+      .page::after {
+        background: radial-gradient(circle, rgba(201, 110, 58, 0.2), transparent 70%);
+        top: auto;
+        right: auto;
+        bottom: -180px;
+        left: -120px;
+      }
+
+      header {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 32px;
+        margin-bottom: 32px;
+        animation: fadeUp 0.8s ease-out;
+      }
+
+      h1 {
+        font-family: "Fraunces", serif;
+        font-size: clamp(2.4rem, 4vw, 3.6rem);
+        margin: 0;
+        letter-spacing: -0.02em;
+      }
+
+      .subtitle {
+        max-width: 520px;
+        color: var(--muted);
+        font-size: 1rem;
+        line-height: 1.5;
+      }
+
+      .grid {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        grid-template-columns: minmax(280px, 1.05fr) minmax(280px, 0.95fr);
+        gap: 28px;
+        align-items: start;
+      }
+
+      .card {
+        background: var(--card);
+        border: 1px solid var(--stroke);
+        border-radius: 18px;
+        padding: 24px;
+        box-shadow: var(--shadow);
+        animation: fadeUp 0.8s ease-out;
+      }
+
+      .card h2 {
+        margin: 0 0 12px;
+        font-size: 1.2rem;
+        letter-spacing: -0.01em;
+      }
+
+      .card p {
+        margin: 0 0 20px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      label {
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+
+      input,
+      select {
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--stroke);
+        background: #fffdf7;
+        font-size: 0.95rem;
+        color: var(--ink);
+      }
+
+      .full {
+        grid-column: 1 / -1;
+      }
+
+      .actions {
+        display: flex;
+        gap: 12px;
+        margin-top: 14px;
+      }
+
+      button {
+        border: none;
+        padding: 12px 18px;
+        border-radius: 999px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .primary {
+        background: var(--accent);
+        color: #fff;
+        box-shadow: 0 12px 24px rgba(23, 107, 91, 0.3);
+      }
+
+      .ghost {
+        background: transparent;
+        border: 1px solid var(--stroke);
+        color: var(--ink);
+      }
+
+      button:hover {
+        transform: translateY(-2px);
+      }
+
+      .status {
+        margin-top: 12px;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .results {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .result-section {
+        border-radius: 16px;
+        padding: 16px;
+        box-shadow: 0 10px 20px rgba(28, 27, 24, 0.08);
+        border: 1px solid var(--stroke);
+      }
+
+      .section-cream {
+        background: #fffaf2;
+      }
+
+      .section-sand {
+        background: #fff3e7;
+      }
+
+      .section-ivory {
+        background: #fffdf7;
+      }
+
+      .section-rose {
+        background: #fff4f0;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--stroke);
+        color: var(--muted);
+        font-size: 0.8rem;
+        background: #fffaf2;
+      }
+
+      .list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .list-item {
+        padding: 12px 14px;
+        border-radius: 12px;
+        background: #fffdf7;
+        border: 1px solid var(--stroke);
+      }
+
+      .info-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .info-card {
+        padding: 12px 14px;
+        border-radius: 12px;
+        background: #fffdf7;
+        border: 1px solid var(--stroke);
+        display: grid;
+        gap: 6px;
+      }
+
+      .info-label {
+        font-size: 0.75rem;
+        color: var(--muted);
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+      }
+
+      .info-value {
+        font-size: 1.05rem;
+        font-weight: 600;
+        color: var(--ink);
+      }
+
+      .rank-grid {
+        display: grid;
+        gap: 12px;
+      }
+
+      .rank-card {
+        padding: 14px 16px;
+        border-radius: 14px;
+        border: 1px solid var(--stroke);
+        background: #fffdf7;
+        display: grid;
+        gap: 6px;
+      }
+
+      .rank-card.rank-1 {
+        background: #e8f5f1;
+        border-color: rgba(23, 107, 91, 0.45);
+      }
+
+      .rank-card.rank-2 {
+        background: #fff6ea;
+      }
+
+      .rank-card.rank-3 {
+        background: #fff1e6;
+      }
+
+      .rank-meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+
+      .rank-price {
+        font-size: 1.15rem;
+        font-weight: 700;
+        color: var(--ink);
+      }
+
+      .chart {
+        background: #fffdf7;
+        border: 1px solid var(--stroke);
+        border-radius: 14px;
+        padding: 10px;
+        text-align: center;
+        position: relative;
+        aspect-ratio: 16 / 9;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+      }
+
+      .chart.loading::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+          110deg,
+          rgba(223, 211, 194, 0.35) 8%,
+          rgba(255, 247, 236, 0.8) 18%,
+          rgba(223, 211, 194, 0.35) 33%
+        );
+        background-size: 200% 100%;
+        animation: shimmer 1.2s infinite;
+      }
+
+      .chart-caption {
+        position: absolute;
+        top: 10px;
+        left: 12px;
+        background: rgba(28, 27, 24, 0.7);
+        color: #fff;
+        padding: 6px 10px;
+        border-radius: 999px;
+        font-size: 0.75rem;
+      }
+
+      .chart img {
+        width: 100%;
+        border-radius: 12px;
+        object-fit: cover;
+        position: relative;
+        z-index: 1;
+      }
+
+      details {
+        border-radius: 12px;
+        border: 1px solid var(--stroke);
+        background: #141310;
+        color: #f6f3ee;
+        padding: 10px 12px;
+      }
+
+      summary {
+        cursor: pointer;
+        font-size: 0.85rem;
+        color: #f6f3ee;
+        list-style: none;
+      }
+
+      summary::-webkit-details-marker {
+        display: none;
+      }
+
+      pre {
+        background: transparent;
+        color: inherit;
+        padding: 12px 0 0;
+        border-radius: 0;
+        overflow: auto;
+        font-size: 0.85rem;
+      }
+
+      @keyframes shimmer {
+        0% {
+          background-position: 100% 0;
+        }
+        100% {
+          background-position: -100% 0;
+        }
+      }
+
+      @keyframes fadeUp {
+        from {
+          opacity: 0;
+          transform: translateY(16px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @media (max-width: 960px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        header {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+        .form-grid {
+          grid-template-columns: 1fr;
+        }
+        .info-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header>
+        <div>
+          <h1>항공권 구매 타이밍 예측 대시보드</h1>
+          <p class="subtitle">
+            Send all model inputs directly, get the top 3 cheapest purchase
+            windows, and visualize 30-day price trends.
+          </p>
+        </div>
+        <span class="pill">HTTP API + Lambda + SageMaker</span>
+      </header>
+
+      <div class="grid">
+        <section class="card">
+          <h2>Inputs</h2>
+          <p>Fill every field and hit Predict. Use the sample if you need a template.</p>
+          <form id="predict-form">
+            <div class="form-grid">
+              <input id="api-url" type="hidden" />
+              <div class="field">
+                <label for="purchase-start-date">Purchase Start Date (optional)</label>
+                <input id="purchase-start-date" type="date" />
+              </div>
+              <div class="field">
+                <label for="origin">Origin</label>
+                <input id="origin" type="text" placeholder="Seoul" required />
+              </div>
+              <div class="field">
+                <label for="destination">Destination</label>
+                <input id="destination" type="text" placeholder="Tokyo" required />
+              </div>
+              <div class="field">
+                <label for="departure-date">Departure Date</label>
+                <input id="departure-date" type="date" required />
+              </div>
+              <div class="field">
+                <label for="arrival-date">Arrival Date</label>
+                <input id="arrival-date" type="date" required />
+              </div>
+              <div class="field">
+                <label for="stops-count">Stops Count</label>
+                <input id="stops-count" type="number" min="0" step="1" required />
+              </div>
+              <div class="field">
+                <label for="flight-duration">Flight Duration Bucket</label>
+                <select id="flight-duration" required>
+                  <option value="short">Short</option>
+                  <option value="medium">Medium</option>
+                  <option value="long">Long</option>
+                </select>
+              </div>
+            </div>
+            <div class="actions">
+              <button class="primary" type="submit">Predict</button>
+              <button class="ghost" type="button" id="load-sample">Load Sample</button>
+            </div>
+            <div class="status" id="status">Waiting for input.</div>
+          </form>
+        </section>
+
+        <section class="card results">
+          <h2>결과</h2>
+          <div class="pill" id="result-pill">No prediction yet</div>
+          <div class="result-section section-cream">
+            <h3>여행 정보 요약</h3>
+            <div class="info-grid" id="user-input-list"></div>
+          </div>
+          <div class="result-section section-sand">
+            <h3>최저가 구매 타이밍 TOP 3</h3>
+            <div class="rank-grid" id="top-list"></div>
+          </div>
+          <div class="result-section section-ivory">
+            <h3>30일 가격 추이</h3>
+            <div class="chart" id="trend-chart">
+              <span class="chart-caption">최저가 포인트</span>
+              <img id="trend-image" alt="Price trend chart" src="" />
+            </div>
+          </div>
+          <div class="result-section section-rose">
+            <h3>원본 응답</h3>
+            <details>
+              <summary>원본 응답 보기</summary>
+              <pre id="raw-json">{}</pre>
+            </details>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <script>
+      const form = document.getElementById("predict-form");
+      const statusEl = document.getElementById("status");
+      const topList = document.getElementById("top-list");
+      const userInputList = document.getElementById("user-input-list");
+      const rawJson = document.getElementById("raw-json");
+      const trendImage = document.getElementById("trend-image");
+      const trendChart = document.getElementById("trend-chart");
+      const pill = document.getElementById("result-pill");
+
+      trendImage.addEventListener("load", () => {
+        trendChart.classList.remove("loading");
+      });
+
+      document.getElementById("load-sample").addEventListener("click", () => {
+        document.getElementById("origin").value = "Seoul";
+        document.getElementById("destination").value = "Tokyo";
+        document.getElementById("departure-date").value = "2026-03-15";
+        document.getElementById("arrival-date").value = "2026-03-16";
+        document.getElementById("stops-count").value = "0";
+        document.getElementById("flight-duration").value = "short";
+      });
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        statusEl.textContent = "Requesting prediction...";
+        pill.textContent = "Running inference";
+        topList.innerHTML = "";
+        userInputList.innerHTML = "";
+        trendImage.src = "";
+        trendChart.classList.add("loading");
+
+        const apiUrl = "https://k04nksfe95.execute-api.us-east-1.amazonaws.com/v1/predict";
+            const payload = {
+          user_input: {
+            origin: document.getElementById("origin").value.trim(),
+            destination: document.getElementById("destination").value.trim(),
+            departure_date: document.getElementById("departure-date").value,
+            arrival_date: document.getElementById("arrival-date").value,
+            stops_count: Number(document.getElementById("stops-count").value),
+            flight_duration_bucket: document.getElementById("flight-duration").value,
+          },
+        };
+
+        const purchaseStartDate = document.getElementById("purchase-start-date").value;
+        if (purchaseStartDate) {
+          payload.purchase_start_date = purchaseStartDate;
+        }
+
+        try {
+          const response = await fetch(apiUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+
+          let data = await response.json();
+          if (data && typeof data.body === "string") {
+            data = JSON.parse(data.body);
+          }
+
+          rawJson.textContent = JSON.stringify(data, null, 2);
+          pill.textContent = "Prediction ready";
+
+          const userInput = data.user_input || payload.user_input;
+          const userFields = [
+            ["출발지", userInput?.origin],
+            ["도착지", userInput?.destination],
+            ["출발일", userInput?.departure_date],
+            ["도착일", userInput?.arrival_date],
+            ["경유 횟수", userInput?.stops_count],
+          ];
+          userFields.forEach(([label, value]) => {
+            const div = document.createElement("div");
+            div.className = "info-card";
+            div.innerHTML = `<span class="info-label">${label}</span><span class="info-value">${value ?? "-"}</span>`;
+            userInputList.appendChild(div);
+          });
+
+          if (data.top_3_cheapest_purchase_times) {
+            data.top_3_cheapest_purchase_times.forEach((item) => {
+              const bucketMap = {
+                dawn: "새벽",
+                morning: "아침",
+                afternoon: "오후",
+                night: "저녁",
+              };
+              const div = document.createElement("div");
+              div.className = `rank-card rank-${item.rank}`;
+              const bucketLabel = bucketMap[item.time_bucket] || item.time_bucket;
+              div.innerHTML = `
+                <div class="rank-meta">
+                  <span>#${item.rank} · ${bucketLabel}</span>
+                  <span>${item.date}</span>
+                </div>
+                <div class="rank-price">${item.predicted_price}</div>
+              `;
+              topList.appendChild(div);
+            });
+          }
+
+          const imageUrl = data.price_trend_30d?.image?.url;
+          if (imageUrl) {
+            trendImage.src = imageUrl;
+          } else {
+            trendChart.classList.remove("loading");
+          }
+
+          statusEl.textContent = "Done.";
+        } catch (error) {
+          statusEl.textContent = `Failed: ${error.message}`;
+          pill.textContent = "Prediction failed";
+        }
+      });
+    </script>
+  </body>
+</html>
